@@ -25,6 +25,9 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Login to Docker Hub
+        if: env.DOCKER_USERNAME != ''
+        env:
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
@@ -34,14 +37,23 @@ jobs:
         id: version
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
+      - name: Set Docker tags
+        id: tags
+        env:
+          DH_USER: ${{ secrets.DOCKER_USERNAME }}
+        run: |
+          TAGS="ghcr.io/katzzero/convwatcher:latest"
+          TAGS="${TAGS},ghcr.io/katzzero/convwatcher:${{ steps.version.outputs.VERSION }}"
+          if [ -n "${DH_USER}" ]; then
+            TAGS="${TAGS},katzzero/convwatcher:latest"
+            TAGS="${TAGS},katzzero/convwatcher:${{ steps.version.outputs.VERSION }}"
+          fi
+          echo "value=${TAGS}" >> $GITHUB_OUTPUT
+
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: |
-            ghcr.io/katzzero/convwatcher:latest
-            ghcr.io/katzzero/convwatcher:${{ steps.version.outputs.VERSION }}
-            katzzero/convwatcher:latest
-            katzzero/convwatcher:${{ steps.version.outputs.VERSION }}
+          tags: ${{ steps.tags.outputs.value }}
