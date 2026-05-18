@@ -1,0 +1,23 @@
+version: "3.8"
+
+services:
+  convwatcher:
+    image: ghcr.io/katzzero/convwatcher:latest
+    container_name: convwatcher
+    restart: unless-stopped
+    volumes:
+      - ./config:/app/config:ro
+      - ./watch:/app/watch
+      - ./output:/app/output
+      - ./logs:/app/logs
+      - /data:/data:ro
+    devices:
+      - /dev/dri:/dev/dri
+    environment:
+      - RUST_LOG=info
+    ports:
+      - "8080:8080"
+    deploy:
+      resources:
+        limits:
+          memory: 2G

@@ -1,0 +1,120 @@
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use anyhow::Result;
+use image::{DynamicImage, ImageFormat};
+use log::{error, info};
+
+use crate::config::global::DiskSpaceConfig;
+use crate::config::watch::ImageRule;
+use crate::health::server::{ConversionRecord, HealthServer};
+use crate::logs::error_logger::ErrorLogger;
+use crate::utils::path::get_base_name;
+
+use super::disk::check_disk_space;
+use super::namer::OutputNamer;
+
+pub async fn process_image(
+    watcher_name: String,
+    file_name: String,
+    file_path: PathBuf,
+    rule: &ImageRule,
+    output_folder: &str,
+    watch_folder: &str,
+    error_logger: Arc<ErrorLogger>,
+    health_server: Arc<HealthServer>,
+    disk_config: &DiskSpaceConfig,
+) {
+    if let Err(e) = check_disk_space(output_folder, watch_folder, disk_config).await {
+        error!("Disk space check failed: {}", e);
+        let _ = health_server.increment_error(&watcher_name);
+        return;
+    }
+
+    let _ = health_server.set_processing(watcher_name.clone(), file_name.clone());
+
+    let output_folder_path = PathBuf::from(output_folder);
+    let base_name = get_base_name(&file_name);
+    let ext = rule.output_ext.trim_start_matches('.');
+    let output_path = match OutputNamer::generate_path(
+        &output_folder_path,
+        &base_name,
+        &rule.output_name_template,
+        "image",
+        ext,
+    ) {
+        Ok(p) => p,
+        Err(_) => OutputNamer::generate_with_counter(&output_folder_path, &base_name, "image", ext),
+    };
+
+    match convert_image(&file_path, &output_path, rule) {
+        Ok(()) => {
+            info!("Image conversion succeeded: {}", file_name);
+            let _ = health_server.increment_processed(&watcher_name);
+            let _ = health_server.add_history(ConversionRecord {
+                time: chrono::Local::now().format("%H:%M:%S").to_string(),
+                watcher: watcher_name.clone(),
+                file: file_name.clone(),
+                status: "done".to_string(),
+                output: output_path.to_string_lossy().to_string(),
+            });
+        }
+        Err(e) => {
+            let msg = format!("Image conversion failed: {}", e);
+            error!("{}", msg);
+            error_logger.log(&msg, &file_name, "image::process");
+            let _ = health_server.increment_error(&watcher_name);
+            let _ = health_server.add_history(ConversionRecord {
+                time: chrono::Local::now().format("%H:%M:%S").to_string(),
+                watcher: watcher_name.clone(),
+                file: file_name.clone(),
+                status: "error".to_string(),
+                output: String::new(),
+            });
+        }
+    }
+
+    let _ = health_server.clear_processing(&watcher_name);
+}
+
+fn convert_image(input: &Path, output: &Path, rule: &ImageRule) -> Result<()> {
+    let mut img = image::open(input)?;
+
+    if !rule.transparent {
+        img = DynamicImage::ImageRgba8(img.to_rgba8());
+    }
+
+    let format = detect_format(&rule.output_ext);
+    save_image(&img, output, format, rule.quality)?;
+
+    Ok(())
+}
+
+fn detect_format(ext: &str) -> ImageFormat {
+    match ext.trim_start_matches('.').to_lowercase().as_str() {
+        "jpg" | "jpeg" => ImageFormat::Jpeg,
+        "png" => ImageFormat::Png,
+        "gif" => ImageFormat::Gif,
+        "bmp" => ImageFormat::Bmp,
+        "tiff" | "tif" => ImageFormat::Tiff,
+        "webp" => ImageFormat::WebP,
+        "qoi" => ImageFormat::Qoi,
+        _ => ImageFormat::Png,
+    }
+}
+
+fn save_image(img: &DynamicImage, path: &Path, format: ImageFormat, _quality: u32) -> Result<()> {
+    match format {
+        ImageFormat::Jpeg => {
+            let mut buf = std::io::BufWriter::new(std::fs::File::create(path)?);
+            img.write_to(&mut buf, image::ImageFormat::Jpeg)?;
+        }
+        ImageFormat::Png => {
+            img.save_with_format(path, ImageFormat::Png)?;
+        }
+        _ => {
+            img.save(path)?;
+        }
+    }
+    Ok(())
+}

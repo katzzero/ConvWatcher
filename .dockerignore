@@ -1,0 +1,14 @@
+target/
+.git
+.github
+scripts/
+blueprint/
+_progress/
+examples/
+logs/
+docker-compose.yml
+docker-bake.json
+.dockerignore
+Dockerfile
+.DS_Store
+*.md

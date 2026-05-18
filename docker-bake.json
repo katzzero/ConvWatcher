@@ -1,0 +1,17 @@
+{
+  "group": {
+    "default": {
+      "targets": ["convwatcher"]
+    }
+  },
+  "target": {
+    "convwatcher": {
+      "context": ".",
+      "platforms": ["linux/amd64", "linux/arm64"],
+      "tags": [
+        "ghcr.io/katzzero/convwatcher:latest",
+        "katzzero/convwatcher:latest"
+      ]
+    }
+  }
+}

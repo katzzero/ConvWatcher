@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ConvWatcher — Dashboard</title>
+<style>
+:root {
+  --bg: #0d1117;
+  --card-bg: #161b22;
+  --border: #30363d;
+  --text: #c9d1d9;
+  --text-dim: #8b949e;
+  --accent: #58a6ff;
+  --green: #3fb950;
+  --red: #f85149;
+  --yellow: #d2991d;
+}
+.light {
+  --bg: #ffffff;
+  --card-bg: #f6f8fa;
+  --border: #d0d7de;
+  --text: #24292f;
+  --text-dim: #57606a;
+  --accent: #0969da;
+  --green: #1a7f37;
+  --red: #cf222e;
+  --yellow: #9a6700;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg); color: var(--text); padding: 20px;
+}
+.header {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid var(--border);
+}
+.header h1 { font-size: 1.5rem; }
+.header button {
+  background: var(--card-bg); color: var(--text); border: 1px solid var(--border);
+  padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 0.875rem;
+}
+.header button:hover { background: var(--border); }
+.stats {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px; margin-bottom: 24px;
+}
+.stat-card {
+  background: var(--card-bg); border: 1px solid var(--border);
+  border-radius: 8px; padding: 16px; text-align: center;
+}
+.stat-card .label { font-size: 0.75rem; color: var(--text-dim); text-transform: uppercase; }
+.stat-card .value { font-size: 1.5rem; font-weight: 600; margin-top: 4px; }
+.stat-card .value.ok { color: var(--green); }
+.stat-card .value.warn { color: var(--yellow); }
+.stat-card .value.err { color: var(--red); }
+.section { margin-bottom: 24px; }
+.section h2 {
+  font-size: 1.1rem; margin-bottom: 12px; padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.card {
+  background: var(--card-bg); border: 1px solid var(--border);
+  border-radius: 8px; padding: 16px; margin-bottom: 12px;
+}
+.card .title { font-weight: 600; margin-bottom: 8px; }
+.card .detail { font-size: 0.85rem; color: var(--text-dim); }
+.rules { font-size: 0.8rem; margin-top: 8px; }
+.rules span {
+  display: inline-block; background: var(--border); color: var(--text);
+  padding: 2px 8px; border-radius: 4px; margin: 2px; font-size: 0.75rem;
+}
+table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+th { color: var(--text-dim); font-weight: 500; }
+.status-done { color: var(--green); }
+.status-error { color: var(--red); }
+.log-viewer {
+  background: #0d1117; color: #58a6ff; border: 1px solid var(--border);
+  border-radius: 8px; padding: 12px; font-family: 'SF Mono', 'Fira Mono', monospace;
+  font-size: 0.8rem; max-height: 300px; overflow-y: auto; white-space: pre-wrap;
+  line-height: 1.5;
+}
+.refresh-info { font-size: 0.75rem; color: var(--text-dim); margin-top: 4px; }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>ConvWatcher Dashboard</h1>
+  <button onclick="toggleTheme()" id="themeBtn">Light</button>
+</div>
+
+<div class="stats" id="stats"></div>
+
+<div class="section">
+  <h2>Watchers</h2>
+  <div id="watchers"></div>
+</div>
+
+<div class="section">
+  <h2>Queue & Processing</h2>
+  <div id="queueInfo" class="card"><div class="detail">Loading...</div></div>
+</div>
+
+<div class="section">
+  <h2>Conversion History</h2>
+  <table>
+    <thead><tr><th>Time</th><th>Watcher</th><th>File</th><th>Status</th><th>Output</th></tr></thead>
+    <tbody id="history"></tbody>
+  </table>
+</div>
+
+<div class="section">
+  <h2>Recent Logs</h2>
+  <div class="log-viewer" id="logs">Loading...</div>
+  <div class="refresh-info">Auto-refresh every 5 seconds</div>
+</div>
+
+<script>
+const BASE = '';
+
+function toggleTheme() {
+  document.body.classList.toggle('light');
+  const isLight = document.body.classList.contains('light');
+  document.getElementById('themeBtn').textContent = isLight ? 'Dark' : 'Light';
+  localStorage.setItem('theme', isLight ? 'light' : 'dark');
+}
+
+if (localStorage.getItem('theme') === 'light') {
+  document.body.classList.add('light');
+  document.getElementById('themeBtn').textContent = 'Dark';
+}
+
+async function fetchJson(url) {
+  try {
+    const r = await fetch(BASE + url);
+    return await r.json();
+  } catch (e) { return {}; }
+}
+
+async function fetchText(url) {
+  try {
+    const r = await fetch(BASE + url);
+    return await r.text();
+  } catch (e) { return 'Error loading'; }
+}
+
+async function refresh() {
+  const health = await fetchJson('/health');
+  const watchers = await fetchJson('/api/watchers');
+  const qp = await fetchJson('/api/queue');
+  const history = await fetchJson('/api/history');
+  const logs = await fetchText('/logs');
+
+  document.getElementById('stats').innerHTML = `
+    <div class="stat-card"><div class="label">Status</div><div class="value ok">${health.status || 'ok'}</div></div>
+    <div class="stat-card"><div class="label">Uptime</div><div class="value">${health.uptime || '—'}</div></div>
+    <div class="stat-card"><div class="label">Watchers</div><div class="value">${health.watchers || 0}</div></div>
+    <div class="stat-card"><div class="label">Queue</div><div class="value">${health.queue || 0}</div></div>
+    <div class="stat-card"><div class="label">Processing</div><div class="value">${health.processing || 0}</div></div>
+    <div class="stat-card"><div class="label">Processed</div><div class="value ok">${health.processed || 0}</div></div>
+    <div class="stat-card"><div class="label">Errors</div><div class="value ${(health.errors || 0) > 0 ? 'err' : ''}">${health.errors || 0}</div></div>
+  `;
+
+  const watcherHtml = (Array.isArray(watchers) ? watchers : []).map(w => `
+    <div class="card">
+      <div class="title">${w.watch_folder}</div>
+      <div class="detail">Output: ${w.output_folder}</div>
+      <div class="rules">
+        ${(w.video_rules || []).length > 0 ? '<span>Video: ' + w.video_rules.join(', ') + '</span>' : ''}
+        ${(w.audio_rules || []).length > 0 ? '<span>Audio: ' + w.audio_rules.join(', ') + '</span>' : ''}
+        ${(w.image_rules || []).length > 0 ? '<span>Image: ' + w.image_rules.join(', ') + '</span>' : ''}
+        ${(w.pdf_rules || []).length > 0 ? '<span>PDF: ' + w.pdf_rules.join(', ') + '</span>' : ''}
+        ${(w.document_rules || []).length > 0 ? '<span>Doc: ' + w.document_rules.join(', ') + '</span>' : ''}
+        ${(w.custom_rules || []).length > 0 ? '<span>Custom: ' + w.custom_rules.join(', ') + '</span>' : ''}
+      </div>
+    </div>
+  `).join('');
+  document.getElementById('watchers').innerHTML = watcherHtml || '<div class="card"><div class="detail">No watchers configured</div></div>';
+
+  const processing = qp.processing || {};
+  const queue = qp.queue || {};
+  let queueHtml = '';
+  if (Object.keys(processing).length > 0) {
+    queueHtml += '<p>Processing: ' + Object.entries(processing).map(([k,v]) => k + ': ' + v).join(', ') + '</p>';
+  }
+  if (Object.keys(queue).length > 0) {
+    queueHtml += '<p>Queue items: ' + Object.values(queue).reduce((a,b) => a + b.length, 0) + '</p>';
+  }
+  document.getElementById('queueInfo').innerHTML = queueHtml || '<div class="detail">Idle — no jobs in queue</div>';
+
+  const historyArr = Array.isArray(history) ? history : [];
+  document.getElementById('history').innerHTML = historyArr.slice(-50).reverse().map(h => `
+    <tr>
+      <td>${h.time}</td>
+      <td>${h.watcher}</td>
+      <td>${h.file}</td>
+      <td class="status-${h.status}">${h.status}</td>
+      <td>${h.output || '—'}</td>
+    </tr>
+  `).join('');
+
+  document.getElementById('logs').textContent = logs || 'No logs available';
+}
+
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>

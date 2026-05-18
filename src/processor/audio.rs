@@ -1,0 +1,137 @@
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
+use std::sync::Arc;
+
+use anyhow::{bail, Result};
+use log::{error, info};
+use tokio::process::Command;
+
+use crate::config::global::DiskSpaceConfig;
+use crate::config::watch::AudioRule;
+use crate::health::server::{ConversionRecord, HealthServer};
+use crate::logs::error_logger::ErrorLogger;
+use crate::utils::path::get_base_name;
+
+use super::disk::check_disk_space;
+use super::namer::OutputNamer;
+
+pub async fn process_audio(
+    watcher_name: String,
+    file_name: String,
+    file_path: PathBuf,
+    rule: &AudioRule,
+    output_folder: &str,
+    watch_folder: &str,
+    error_logger: Arc<ErrorLogger>,
+    health_server: Arc<HealthServer>,
+    disk_config: &DiskSpaceConfig,
+    ffmpeg_path: &str,
+) {
+    if let Err(e) = check_disk_space(output_folder, watch_folder, disk_config).await {
+        error!("Disk space check failed: {}", e);
+        let _ = health_server.increment_error(&watcher_name);
+        return;
+    }
+
+    let _ = health_server.set_processing(watcher_name.clone(), file_name.clone());
+
+    let output_folder_path = PathBuf::from(output_folder);
+    let base_name = get_base_name(&file_name);
+    let ext = rule.output_ext.trim_start_matches('.');
+    let output_path = match OutputNamer::generate_path(
+        &output_folder_path,
+        &base_name,
+        &rule.output_name_template,
+        &rule.audio_codec,
+        ext,
+    ) {
+        Ok(p) => p,
+        Err(_) => OutputNamer::generate_with_counter(&output_folder_path, &base_name, "audio", ext),
+    };
+
+    match convert_audio(&file_path, &output_path, rule, ffmpeg_path).await {
+        Ok(()) => {
+            info!("Audio conversion succeeded: {}", file_name);
+            let _ = health_server.increment_processed(&watcher_name);
+            let _ = health_server.add_history(ConversionRecord {
+                time: chrono::Local::now().format("%H:%M:%S").to_string(),
+                watcher: watcher_name.clone(),
+                file: file_name.clone(),
+                status: "done".to_string(),
+                output: output_path.to_string_lossy().to_string(),
+            });
+        }
+        Err(e) => {
+            let msg = format!("Audio conversion failed: {}", e);
+            error!("{}", msg);
+            error_logger.log(&msg, &file_name, "audio::process");
+            let _ = health_server.increment_error(&watcher_name);
+            let _ = health_server.add_history(ConversionRecord {
+                time: chrono::Local::now().format("%H:%M:%S").to_string(),
+                watcher: watcher_name.clone(),
+                file: file_name.clone(),
+                status: "error".to_string(),
+                output: String::new(),
+            });
+        }
+    }
+
+    let _ = health_server.clear_processing(&watcher_name);
+}
+
+async fn convert_audio(input: &Path, output: &Path, rule: &AudioRule, ffmpeg_path: &str) -> Result<()> {
+    let args = build_audio_args(rule);
+
+    let mut cmd = Command::new(ffmpeg_path);
+    cmd.arg("-y")
+        .arg("-i")
+        .arg(input.as_os_str());
+
+    for arg in &args {
+        cmd.arg(arg);
+    }
+
+    cmd.arg(output.as_os_str())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let output_result = cmd.output().await?;
+
+    if !output_result.status.success() {
+        let stderr = String::from_utf8_lossy(&output_result.stderr);
+        bail!("FFmpeg failed: {}", stderr);
+    }
+
+    Ok(())
+}
+
+fn build_audio_args(rule: &AudioRule) -> Vec<String> {
+    let mut args = Vec::new();
+
+    args.push("-vn".to_string());
+
+    args.push("-c:a".to_string());
+    args.push(rule.audio_codec.clone());
+
+    if !rule.audio_bitrate.is_empty() {
+        args.push("-b:a".to_string());
+        args.push(rule.audio_bitrate.clone());
+    }
+
+    if let Some(sr) = rule.sample_rate {
+        args.push("-ar".to_string());
+        args.push(sr.to_string());
+    }
+
+    if let Some(ch) = rule.channels {
+        args.push("-ac".to_string());
+        args.push(ch.to_string());
+    }
+
+    if let Some(ref q) = rule.quality {
+        args.push("-q:a".to_string());
+        args.push(q.clone());
+    }
+
+    args
+}

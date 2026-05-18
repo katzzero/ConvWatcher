@@ -1,0 +1,151 @@
+# =============================================================================
+# ConvWatcher — Examples
+# =============================================================================
+# Format 1: config/watchers.yaml  (manifesto — declara watchers com regras default)
+# Format 2: config/watchs/<name>.yaml  (override — sobrescreve regras de um watcher)
+#
+# Um watcher é sempre de UM tipo (video, image, audio, pdf, document, custom).
+# O tipo é a chave YAML de nível superior dentro do watcher.
+# =============================================================================
+
+# ─── FORMAT 1: MANIFESTO (config/watchers.yaml) ───────────────────────────
+
+watchers:
+
+  # ─── Exemplo 1: Video Watcher ─────────────────────────────────────────
+  - name: videos
+    output_folder: ./saida_videos
+    video:
+      - input_extensions: [.mp4, .avi, .mkv, .mov, .webm]
+        output_ext: .mp4
+        codec: libx264
+        quality: "crf 23"
+        audio_codec: aac
+        audio_bitrate: "128k"
+        output_name_template: "{base}_{codec}_{num}.{ext}"
+        check_duration: true
+        min_duration_ratio: 0.9
+
+      # Subfolder mode: ->libx264/
+      - format: h264
+        input_extensions: [.mp4, .mkv]
+        output_ext: .mp4
+        codec: libx264
+        quality: "crf 23"
+        audio_codec: aac
+        audio_bitrate: "128k"
+
+  # ─── Exemplo 2: Image Watcher ─────────────────────────────────────────
+  - name: fotos
+    image:
+      - input_extensions: [.jpg, .jpeg, .png, .gif, .bmp, .tiff, .webp]
+        output_ext: .png
+        quality: 90
+        transparent: false
+        output_name_template: "{base}_conv.{ext}"
+
+      # Subfolder mode: ->jpg/
+      - format: jpg
+        input_extensions: [.png, .webp, .bmp]
+        output_ext: .jpg
+        quality: 85
+
+  # ─── Exemplo 3: Audio Watcher ─────────────────────────────────────────
+  - name: musicas
+    audio:
+      - input_extensions: [.wav, .flac, .aiff]
+        output_ext: .mp3
+        audio_codec: libmp3lame
+        audio_bitrate: "320k"
+        sample_rate: 44100
+        channels: 2
+        output_name_template: "{base}_{codec}_{num}.{ext}"
+
+      - input_extensions: [.ogg, .opus, .wma, .m4a, .aac]
+        output_ext: .mp3
+        audio_codec: libmp3lame
+        audio_bitrate: "192k"
+
+  # ─── Exemplo 4: PDF Watcher ───────────────────────────────────────────
+  - name: pdfs
+    pdf:
+      # Compress PDFs
+      - input_extensions: [.pdf]
+        output_ext: .pdf
+        mode: compress
+        quality: ebook
+        output_name_template: "{base}_compressed.{ext}"
+
+      # Extract text from PDFs
+      - input_extensions: [.pdf]
+        output_ext: .txt
+        mode: extract_text
+        output_name_template: "{base}_text.{ext}"
+
+      # Convert to PDF/A
+      - input_extensions: [.pdf]
+        output_ext: .pdf
+        mode: pdf_a
+        pdfa_version: "2b"
+        output_name_template: "{base}_pdfa.{ext}"
+
+  # ─── Exemplo 5: Document Watcher ──────────────────────────────────────
+  - name: documentos
+    document:
+      - input_extensions: [.md, .docx, .odt, .html]
+        output_ext: .pdf
+        toc: true
+        toc_depth: 3
+        standalone: true
+        pdf_engine: "weasyprint"
+        output_name_template: "{base}_converted.{ext}"
+
+      - input_extensions: [.epub]
+        output_ext: .docx
+        output_name_template: "{base}_converted.{ext}"
+
+  # ─── Exemplo 6: Custom Watcher ────────────────────────────────────────
+  - name: scripts
+    custom:
+      - input_extensions: [.txt, .log, .csv]
+        output_ext: ".zip"
+        command: "zip -j {output} {input}"
+        output_name_template: "{base}_custom.{ext}"
+        description: "Compress files to ZIP"
+
+      - input_extensions: [.jpg, .png]
+        output_ext: ".jpg"
+        command: "convert {input} -resize 800x800 {output}"
+        output_name_template: "{base}_thumb.{ext}"
+        description: "Resize images to 800px"
+
+
+# =============================================================================
+# FORMAT 2: OVERRIDE (config/watchs/<name>.yaml)
+# =============================================================================
+# Coloque arquivos .yaml na raiz da watch_folder (ex: ./inputs/videos/videos.yaml)
+# Se a secret bater com o global, o arquivo é promovido para config/watchs/
+# e as regras do manifesto são sobrescritas.
+#
+# O nome do arquivo DEVE bater com o name do watcher no manifesto.
+# O tipo DEVE ser o mesmo do manifesto (ex: se manifesto é video, override é video).
+# =============================================================================
+
+# ─── Exemplo 7: Override para o watcher "videos" ────────────────────────
+#
+# Arquivo: config/watchs/videos.yaml
+# (promovido de ./inputs/videos/videos.yaml após validação)
+#
+# secret: "changeme"
+# output_folder: ./saida_especial
+# video:
+#   - input_extensions: [.mp4]
+#     output_ext: .mp4
+#     codec: libx265
+#     quality: "crf 28"
+#     audio_codec: aac
+#     audio_bitrate: "192k"
+#
+# Resultado: o watcher "videos" agora usa codec libx265 com crf 28
+#            e output_folder ./saida_especial em vez do default do manifesto.
+# =============================================================================
