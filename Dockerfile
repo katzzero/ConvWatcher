@@ -7,34 +7,22 @@ ARG TARGETARCH
 WORKDIR /app
 
 COPY Cargo.toml Cargo.lock ./
+COPY src/ ./src/
+COPY config/ ./config/
 
 RUN if [ "$TARGETARCH" = "arm64" ]; then \
         rustup target add aarch64-unknown-linux-musl; \
     fi
 
-RUN mkdir src && echo "fn main() {}" > src/main.rs
 RUN if [ "$TARGETARCH" = "arm64" ]; then \
         T=aarch64-unknown-linux-musl; \
     else \
         T=x86_64-unknown-linux-musl; \
     fi && \
-    cargo build --release --target "$T"
-
-RUN rm -rf src
-
-COPY src/ ./src/
-COPY config/ ./config/
-
-RUN if [ "$TARGETARCH" = "arm64" ]; then \
-        T=aarch64-unknown-linux-musl; \
-    else \
-        T=x86_64-unknown-linux-musl; \
-    fi && \
-    cargo build --release --target "$T"
+    cargo build --release --target "$T" && \
+    cp target/"$T"/release/convwatcher /convwatcher
 
 FROM alpine:3.21
-
-ARG TARGETARCH
 
 RUN apk add --no-cache \
     ffmpeg \
@@ -52,11 +40,10 @@ RUN adduser -D -u 1000 convwatcher
 
 WORKDIR /app
 
-COPY --from=builder /app/target/x86_64-unknown-linux-musl/release/convwatcher /usr/local/bin/ 2>/dev/null || true
-COPY --from=builder /app/target/aarch64-unknown-linux-musl/release/convwatcher /usr/local/bin/ 2>/dev/null || true
+COPY --from=builder /convwatcher /usr/local/bin/convwatcher
 
 RUN mkdir -p /app/config /app/inputs /app/outputs /app/logs \
-    && chown -R convwatcher:convwatcher /app
+    && chown -R convwatcher:convwatcher /app /usr/local/bin/convwatcher
 
 USER convwatcher
 
