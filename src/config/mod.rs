@@ -6,30 +6,55 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
-use log::warn;
+use log::{info, warn};
 
 use global::GlobalConfig;
 use watch::{WatchConfig, WatchConfigCollection, WatchType};
+
+fn invalidate_and_replace(path: &Path, default_yaml: &str, label: &str) {
+    let invalid_path = path.with_extension("yaml.invalid");
+    if let Err(e) = fs::rename(path, &invalid_path) {
+        warn!("Failed to rename invalid {} {:?}: {}", label, path, e);
+    } else {
+        warn!(
+            "{} {:?} is incompatible — renamed to {:?}",
+            label, path, invalid_path
+        );
+    }
+    if let Err(e) = fs::write(path, default_yaml) {
+        warn!("Failed to write default {}: {}", label, e);
+    } else {
+        info!("Created fresh default {}: {}", label, path.display());
+    }
+}
 
 pub fn load_global_config(custom_path: Option<&Path>) -> Result<GlobalConfig> {
     let path = custom_path
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| PathBuf::from("config/global.yaml"));
 
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let default = GlobalConfig::default();
+    let default_yaml = serde_yaml::to_string(&default)?;
+
     if !path.exists() {
-        let default = GlobalConfig::default();
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let yaml = serde_yaml::to_string(&default)?;
-        fs::write(&path, yaml)?;
-        log::info!("Created default config: {}", path.display());
+        fs::write(&path, &default_yaml)?;
+        info!("Created default config: {}", path.display());
         return Ok(default);
     }
 
     let content = fs::read_to_string(&path)?;
-    let config: GlobalConfig = serde_yaml::from_str(&content)?;
-    Ok(config)
+    match serde_yaml::from_str::<GlobalConfig>(&content) {
+        Ok(config) => Ok(config),
+        Err(e) => {
+            warn!("Failed to parse {}: {}", path.display(), e);
+            invalidate_and_replace(&path, &default_yaml, "global.yaml");
+            Ok(default)
+        }
+    }
 }
 
 pub fn load_watch_configs(
@@ -45,27 +70,34 @@ pub fn load_watch_configs(
     let main_path = PathBuf::from("config/watchers.yaml");
     let mut configs = Vec::new();
 
+    let default_watchers = WatchConfigCollection {
+        watchers: vec![WatchConfig {
+            name: "default".to_string(),
+            watch_folder: String::new(),
+            output_folder: String::new(),
+            watch_type: WatchType::Video {
+                video: Vec::new(),
+            },
+        }],
+    };
+    let default_yaml = serde_yaml::to_string(&default_watchers)?;
+
     if main_path.exists() {
         let content = fs::read_to_string(&main_path)?;
-        let collection: WatchConfigCollection = serde_yaml::from_str(&content)?;
-        configs = collection.watchers;
-    }
-
-    if configs.is_empty() {
+        match serde_yaml::from_str::<WatchConfigCollection>(&content) {
+            Ok(collection) => {
+                configs = collection.watchers;
+            }
+            Err(e) => {
+                warn!("Failed to parse {}: {}", main_path.display(), e);
+                invalidate_and_replace(&main_path, &default_yaml, "watchers.yaml");
+                configs = default_watchers.watchers;
+            }
+        }
+    } else {
         fs::create_dir_all(main_path.parent().unwrap_or(Path::new("config")))?;
-        let default_watchers = WatchConfigCollection {
-            watchers: vec![WatchConfig {
-                name: "default".to_string(),
-                watch_folder: String::new(),
-                output_folder: String::new(),
-                watch_type: WatchType::Video {
-                    video: Vec::new(),
-                },
-            }],
-        };
-        let yaml = serde_yaml::to_string(&default_watchers)?;
-        fs::write(&main_path, yaml)?;
-        log::info!("Created default watcher config: {}", main_path.display());
+        fs::write(&main_path, &default_yaml)?;
+        info!("Created default watcher config: {}", main_path.display());
         configs = default_watchers.watchers;
     }
 

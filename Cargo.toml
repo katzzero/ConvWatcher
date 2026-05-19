@@ -1,6 +1,6 @@
 [package]
 name = "convwatcher"
-version = "0.8.5"
+version = "0.8.6"
 edition = "2021"
 description = "A daemon that watches folders and automatically converts files"
 license = "MIT"
