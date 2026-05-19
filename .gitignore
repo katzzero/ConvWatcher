@@ -5,3 +5,4 @@
 
 # Internal docs
 _progress/
+*.invalid
