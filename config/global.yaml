@@ -1,36 +1,29 @@
 file_check_interval_ms: 2000
 stable_time_ms: 5000
 ffmpeg_path: ffmpeg
-ffprobe_path: ffprobe
+ffprobe_path: ''
 max_concurrent_conversions: 4
 config_refresh_interval_s: 300
-
-inputs_dir: "./inputs"
-outputs_dir: "./outputs"
-
-scan_embedded_configs: true
-embedded_secret: "changeme"
-watchs_dir: "./config/watchs"
-embedded_scan_interval_s: 30
-
+inputs_dir: ./inputs
+outputs_dir: ./outputs
+embedded_scan_interval_s: 0
+embedded_secret: ''
+watchs_dir: ./config/watchs
+scan_embedded_configs: false
 log:
-  errors_file: "./logs/errors.log"
+  errors_file: ./logs/errors.log
   max_log_files: 30
   max_log_size_mb: 100
   max_error_log_size_mb: 50
-
 healthcheck:
   http_port: 8080
-  bind_address: "0.0.0.0"
-
+  bind_address: 0.0.0.0
 disk_space:
   check_interval_s: 60
-  threshold:
-    Gb: 5.0
-  check_output: true
-  check_watch: true
-
+  threshold: 500
+  check_output: false
+  check_watch: false
 history:
   persistent: false
-  file: "./logs/history.json"
+  file: ./logs/history.json
   max_records: 500

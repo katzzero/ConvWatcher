@@ -1,52 +1,6 @@
 watchers:
-  - name: videos
-    video:
-      - input_extensions: [.mp4, .avi, .mkv, .mov, .webm, .flv, .wmv, .mpeg, .mpg, .ts, .mts]
-        output_ext: .mp4
-        codec: libx264
-        quality: "crf 23"
-        audio_codec: aac
-        audio_bitrate: "128k"
-        output_name_template: "{base}_{codec}_{num}.{ext}"
-        check_duration: true
-        min_duration_ratio: 0.9
-
-  - name: fotos
-    image:
-      - input_extensions: [.jpg, .jpeg, .png, .gif, .bmp, .tiff, .tif, .webp]
-        output_ext: .png
-        quality: 90
-        transparent: false
-        output_name_template: "{base}_conv.{ext}"
-
-  - name: musicas
-    audio:
-      - input_extensions: [.mp3, .wav, .flac, .aac, .ogg, .opus, .wma, .m4a, .aiff, .caf]
-        output_ext: .mp3
-        audio_codec: libmp3lame
-        audio_bitrate: "192k"
-        output_name_template: "{base}_{codec}_{num}.{ext}"
-
-  - name: pdfs
-    pdf:
-      - input_extensions: [.pdf]
-        output_ext: .pdf
-        mode: compress
-        quality: ebook
-        output_name_template: "{base}_converted.{ext}"
-
-  - name: documentos
-    document:
-      - input_extensions: [.md, .docx, .odt, .html, .epub, .tex, .rst, .org]
-        output_ext: .pdf
-        toc: true
-        standalone: true
-        output_name_template: "{base}_converted.{ext}"
-
-  - name: scripts
-    custom:
-      - input_extensions: [.txt, .log, .csv]
-        output_ext: ".zip"
-        command: "zip -j {output} {input}"
-        output_name_template: "{base}_custom.{ext}"
-        description: "Compress files to ZIP"
+- name: default
+  watch_folder: ''
+  output_folder: ''
+  video:
+    video: []

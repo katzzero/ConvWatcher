@@ -133,9 +133,9 @@ impl Default for DiskSpaceConfig {
     fn default() -> Self {
         Self {
             check_interval_s: 60,
-            threshold: DiskSpaceThreshold::Gb(5.0),
-            check_output: true,
-            check_watch: true,
+            threshold: DiskSpaceThreshold::Mb(500),
+            check_output: false,
+            check_watch: false,
         }
     }
 }
