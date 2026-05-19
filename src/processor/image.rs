@@ -25,11 +25,7 @@ pub async fn process_image(
     health_server: Arc<HealthServer>,
     disk_config: &DiskSpaceConfig,
 ) {
-    if let Err(e) = check_disk_space(output_folder, watch_folder, disk_config).await {
-        error!("Disk space check failed: {}", e);
-        let _ = health_server.increment_error(&watcher_name);
-        return;
-    }
+    check_disk_space(output_folder, watch_folder, disk_config).await;
 
     let _ = health_server.set_processing(watcher_name.clone(), file_name.clone());
 

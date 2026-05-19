@@ -1,32 +1,32 @@
-use anyhow::{bail, Result};
-
 use crate::config::global::{DiskSpaceConfig, DiskSpaceThreshold};
 
 pub async fn check_disk_space(
     output_folder: &str,
     watch_folder: &str,
     config: &DiskSpaceConfig,
-) -> Result<()> {
+) {
+    if !config.check_output && !config.check_watch {
+        return;
+    }
+
     #[cfg(unix)]
     {
-        use std::fs;
-
         if config.check_output {
             if let Some(parent) = get_mount_point(output_folder) {
-                check_available(&parent, &config.threshold, "output")?;
+                if let Err(e) = check_available(&parent, &config.threshold, "output") {
+                    log::warn!("Disk space low (output): {}", e);
+                }
             }
         }
 
         if config.check_watch {
             if let Some(parent) = get_mount_point(watch_folder) {
-                check_available(&parent, &config.threshold, "watch")?;
+                if let Err(e) = check_available(&parent, &config.threshold, "watch") {
+                    log::warn!("Disk space low (watch): {}", e);
+                }
             }
         }
-
-        let _ = fs::metadata(output_folder);
     }
-
-    Ok(())
 }
 
 #[cfg(unix)]
@@ -34,19 +34,13 @@ fn get_mount_point(path: &str) -> Option<std::path::PathBuf> {
     use std::path::Path;
 
     let p = Path::new(path);
-    let canonical = p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    let current = if p.exists() {
+        p.canonicalize().ok()?
+    } else {
+        p.to_path_buf()
+    };
 
-    let mut current = canonical.as_path();
-    loop {
-        if let Some(parent) = current.parent() {
-            if parent.as_os_str().is_empty() || parent == current {
-                return Some(current.to_path_buf());
-            }
-            current = parent;
-        } else {
-            return Some(current.to_path_buf());
-        }
-    }
+    Some(current)
 }
 
 #[cfg(unix)]
@@ -54,12 +48,17 @@ fn check_available(
     mount: &std::path::Path,
     threshold: &DiskSpaceThreshold,
     label: &str,
-) -> Result<()> {
+) -> anyhow::Result<()> {
     use std::process::Command;
 
-    let output = Command::new("df")
+    let output = match Command::new("df")
+        .arg("-k")
         .arg(mount.as_os_str())
-        .output()?;
+        .output()
+    {
+        Ok(o) => o,
+        Err(_) => return Ok(()),
+    };
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let lines: Vec<&str> = stdout.lines().collect();
@@ -68,7 +67,10 @@ fn check_available(
     }
 
     let columns: Vec<&str> = lines[1].split_whitespace().collect();
-    let total_kb: u64 = columns.get(1).unwrap_or(&"0").parse().unwrap_or(0);
+    if columns.len() < 4 {
+        return Ok(());
+    }
+
     let available_kb: u64 = columns.get(3).unwrap_or(&"0").parse().unwrap_or(0);
     let available_bytes = available_kb * 1024;
 
@@ -76,6 +78,7 @@ fn check_available(
         DiskSpaceThreshold::Mb(mb) => mb * 1024 * 1024,
         DiskSpaceThreshold::Gb(gb) => (*gb * 1024.0 * 1024.0 * 1024.0) as u64,
         DiskSpaceThreshold::Percent(pct) => {
+            let total_kb: u64 = columns.get(1).unwrap_or(&"0").parse().unwrap_or(0);
             if total_kb == 0 {
                 1
             } else {
@@ -86,8 +89,8 @@ fn check_available(
     };
 
     if available_bytes < required_bytes {
-        bail!(
-            "Low disk space on {}: {} MB available, need {} MB",
+        anyhow::bail!(
+            "{}: {} MB available, need {} MB",
             label,
             available_bytes / (1024 * 1024),
             required_bytes / (1024 * 1024)
@@ -109,15 +112,11 @@ pub async fn disk_space_monitor(
         ticker.tick().await;
 
         for folder in &output_folders {
-            if let Err(e) = check_disk_space(folder, folder, &config).await {
-                log::warn!("Disk space warning (output): {}", e);
-            }
+            check_disk_space(folder, folder, &config).await;
         }
 
         for folder in &watch_folders {
-            if let Err(e) = check_disk_space(folder, folder, &config).await {
-                log::warn!("Disk space warning (watch): {}", e);
-            }
+            check_disk_space(folder, folder, &config).await;
         }
     }
 }

@@ -17,7 +17,14 @@ pub fn load_global_config(custom_path: Option<&Path>) -> Result<GlobalConfig> {
         .unwrap_or_else(|| PathBuf::from("config/global.yaml"));
 
     if !path.exists() {
-        return Ok(GlobalConfig::default());
+        let default = GlobalConfig::default();
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let yaml = serde_yaml::to_string(&default)?;
+        fs::write(&path, yaml)?;
+        log::info!("Created default config: {}", path.display());
+        return Ok(default);
     }
 
     let content = fs::read_to_string(&path)?;
@@ -45,7 +52,21 @@ pub fn load_watch_configs(
     }
 
     if configs.is_empty() {
-        anyhow::bail!("No watchers found. Create config/watchers.yaml");
+        fs::create_dir_all(main_path.parent().unwrap_or(Path::new("config")))?;
+        let default_watchers = WatchConfigCollection {
+            watchers: vec![WatchConfig {
+                name: "default".to_string(),
+                watch_folder: String::new(),
+                output_folder: String::new(),
+                watch_type: WatchType::Video {
+                    video: Vec::new(),
+                },
+            }],
+        };
+        let yaml = serde_yaml::to_string(&default_watchers)?;
+        fs::write(&main_path, yaml)?;
+        log::info!("Created default watcher config: {}", main_path.display());
+        configs = default_watchers.watchers;
     }
 
     Ok(resolve_all_configs(configs, global))
