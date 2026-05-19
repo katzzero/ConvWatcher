@@ -183,13 +183,18 @@ impl HealthServer {
             let method = request.method().clone();
             let path = url.as_str();
 
-            let content_type = tiny_http::Header::from_bytes(
-                &b"Content-Type"[..],
-                &b"application/json"[..],
-            )
-            .unwrap();
+            let json_ct = tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).unwrap();
+            let html_ct = tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"text/html"[..]).unwrap();
+            let text_ct = tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"text/plain"[..]).unwrap();
 
             match (method, path) {
+                (tiny_http::Method::Get, "/") | (tiny_http::Method::Get, "/dashboard") => {
+                    let html = include_str!("dashboard.html");
+                    let _ = request.respond(
+                        tiny_http::Response::from_string(html)
+                            .with_header(html_ct.clone()),
+                    );
+                }
                 (tiny_http::Method::Get, "/health") => {
                     let uptime = self.start_time.elapsed();
                     let uptime_str = format!(
@@ -214,25 +219,16 @@ impl HealthServer {
                     });
                     let body = serde_json::to_string_pretty(&response).unwrap_or_default();
                     let _ = request.respond(
-                        tiny_http::Response::from_string(body).with_header(content_type),
-                    );
-                }
-                (tiny_http::Method::Get, "/dashboard") => {
-                    let html = include_str!("dashboard.html");
-                    let ct = tiny_http::Header::from_bytes(
-                        &b"Content-Type"[..],
-                        &b"text/html; charset=utf-8"[..],
-                    )
-                    .unwrap();
-                    let _ = request.respond(
-                        tiny_http::Response::from_string(html).with_header(ct),
+                        tiny_http::Response::from_string(body)
+                            .with_header(json_ct.clone()),
                     );
                 }
                 (tiny_http::Method::Get, "/api/watchers") => {
                     let watchers = self.watchers.lock().unwrap();
                     let body = serde_json::to_string_pretty(&*watchers).unwrap_or_default();
                     let _ = request.respond(
-                        tiny_http::Response::from_string(body).with_header(content_type),
+                        tiny_http::Response::from_string(body)
+                            .with_header(json_ct.clone()),
                     );
                 }
                 (tiny_http::Method::Get, "/api/queue") => {
@@ -244,30 +240,26 @@ impl HealthServer {
                     });
                     let body = serde_json::to_string_pretty(&response).unwrap_or_default();
                     let _ = request.respond(
-                        tiny_http::Response::from_string(body).with_header(content_type),
+                        tiny_http::Response::from_string(body)
+                            .with_header(json_ct.clone()),
                     );
                 }
                 (tiny_http::Method::Get, "/api/history") => {
                     let history = self.history.lock().unwrap();
                     let body = serde_json::to_string_pretty(&*history).unwrap_or_default();
                     let _ = request.respond(
-                        tiny_http::Response::from_string(body).with_header(content_type),
+                        tiny_http::Response::from_string(body)
+                            .with_header(json_ct.clone()),
                     );
                 }
                 (tiny_http::Method::Get, "/logs") => {
-                    let text_ct = tiny_http::Header::from_bytes(
-                        &b"Content-Type"[..],
-                        &b"text/plain; charset=utf-8"[..],
-                    )
-                    .unwrap();
                     match &self.app_log_path {
                         Some(path) => match read_tail(path, 100) {
                             Ok(content) => {
-                                let _ =
-                                    request.respond(
-                                        tiny_http::Response::from_string(content)
-                                            .with_header(text_ct),
-                                    );
+                                let _ = request.respond(
+                                    tiny_http::Response::from_string(content)
+                                        .with_header(text_ct.clone()),
+                                );
                             }
                             Err(e) => {
                                 let _ = request.respond(
@@ -285,19 +277,13 @@ impl HealthServer {
                     }
                 }
                 (tiny_http::Method::Get, "/logs/errors") => {
-                    let text_ct = tiny_http::Header::from_bytes(
-                        &b"Content-Type"[..],
-                        &b"text/plain; charset=utf-8"[..],
-                    )
-                    .unwrap();
                     match &self.error_log_path {
                         Some(path) => match read_tail(path, 100) {
                             Ok(content) => {
-                                let _ =
-                                    request.respond(
-                                        tiny_http::Response::from_string(content)
-                                            .with_header(text_ct),
-                                    );
+                                let _ = request.respond(
+                                    tiny_http::Response::from_string(content)
+                                        .with_header(text_ct.clone()),
+                                );
                             }
                             Err(e) => {
                                 let _ = request.respond(
@@ -315,19 +301,13 @@ impl HealthServer {
                     }
                 }
                 (tiny_http::Method::Get, "/logs/app") => {
-                    let text_ct = tiny_http::Header::from_bytes(
-                        &b"Content-Type"[..],
-                        &b"text/plain; charset=utf-8"[..],
-                    )
-                    .unwrap();
                     match &self.app_log_path {
                         Some(path) => match std::fs::read_to_string(path) {
                             Ok(content) => {
-                                let _ =
-                                    request.respond(
-                                        tiny_http::Response::from_string(content)
-                                            .with_header(text_ct),
-                                    );
+                                let _ = request.respond(
+                                    tiny_http::Response::from_string(content)
+                                        .with_header(text_ct.clone()),
+                                );
                             }
                             Err(e) => {
                                 let _ = request.respond(
