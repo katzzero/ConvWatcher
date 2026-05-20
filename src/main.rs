@@ -9,7 +9,7 @@ mod watcher;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 use log::{error, info, warn};
 use tokio::sync::{broadcast, mpsc, Semaphore};
@@ -23,7 +23,14 @@ use utils::hardware::check_hardware_accel;
 #[tokio::main]
 async fn main() {
     if let Err(e) = run().await {
-        eprintln!("Fatal error: {}", e);
+        eprintln!("ConvWatcher fatal error:");
+        for (i, cause) in e.chain().enumerate() {
+            if i == 0 {
+                eprintln!("  {}", cause);
+            } else {
+                eprintln!("  caused by: {}", cause);
+            }
+        }
         std::process::exit(1);
     }
 }
@@ -38,7 +45,7 @@ async fn run() -> Result<()> {
     info!("Global config loaded");
 
     let mut watch_configs =
-        config::load_watch_configs(cli.config.as_deref(), &global_config).unwrap_or_default();
+        config::load_watch_configs(cli.config.as_deref(), &global_config)?;
     info!("Loaded {} watcher config(s)", watch_configs.len());
 
     if let Some(watch_folder) = &cli.watch {
@@ -54,7 +61,8 @@ async fn run() -> Result<()> {
     }
 
     for cfg in &watch_configs {
-        watcher::monitor::create_folders(cfg)?;
+        watcher::monitor::create_folders(cfg)
+            .with_context(|| format!("Cannot create folders for watcher '{}'", cfg.name))?;
     }
 
     let error_logger = Arc::new(ErrorLogger::new(&global_config)?);
@@ -262,11 +270,14 @@ fn setup_logging(cli: &Cli) -> Result<()> {
         });
 
     if cli.daemon {
-        let log_file = std::fs::OpenOptions::new()
+        match std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open("./logs/convwatcher.log")?;
-        dispatch = dispatch.chain(log_file);
+            .open("./logs/convwatcher.log")
+        {
+            Ok(log_file) => dispatch = dispatch.chain(log_file),
+            Err(e) => eprintln!("Warning: cannot open log file: {}", e),
+        }
     } else {
         dispatch = dispatch.chain(
             fern::Dispatch::new()

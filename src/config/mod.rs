@@ -5,7 +5,7 @@ pub mod embedded;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use log::{info, warn};
 
 use global::GlobalConfig;
@@ -34,19 +34,22 @@ pub fn load_global_config(custom_path: Option<&Path>) -> Result<GlobalConfig> {
         .unwrap_or_else(|| PathBuf::from("config/global.yaml"));
 
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
+        fs::create_dir_all(parent)
+            .with_context(|| format!("Cannot create directory {}", parent.display()))?;
     }
 
     let default = GlobalConfig::default();
     let default_yaml = serde_yaml::to_string(&default)?;
 
     if !path.exists() {
-        fs::write(&path, &default_yaml)?;
+        fs::write(&path, &default_yaml)
+            .with_context(|| format!("Cannot write {}", path.display()))?;
         info!("Created default config: {}", path.display());
         return Ok(default);
     }
 
-    let content = fs::read_to_string(&path)?;
+    let content = fs::read_to_string(&path)
+        .with_context(|| format!("Cannot read {}", path.display()))?;
     match serde_yaml::from_str::<GlobalConfig>(&content) {
         Ok(config) => Ok(config),
         Err(e) => {
@@ -62,13 +65,13 @@ pub fn load_watch_configs(
     global: &GlobalConfig,
 ) -> Result<Vec<WatchConfig>> {
     if let Some(path) = custom_path {
-        let content = fs::read_to_string(path)?;
+        let content = fs::read_to_string(path)
+            .with_context(|| format!("Cannot read {}", path.display()))?;
         let collection: WatchConfigCollection = serde_yaml::from_str(&content)?;
         return Ok(resolve_all_configs(collection.watchers, global));
     }
 
     let main_path = PathBuf::from("config/watchers.yaml");
-    let mut configs = Vec::new();
 
     let default_watchers = WatchConfigCollection {
         watchers: vec![WatchConfig {
@@ -80,26 +83,28 @@ pub fn load_watch_configs(
             },
         }],
     };
-    let default_yaml = serde_yaml::to_string(&default_watchers)?;
+    let default_yaml = serde_yaml::to_string(&default_watchers)
+        .with_context(|| "Failed to serialize default watcher config")?;
 
-    if main_path.exists() {
-        let content = fs::read_to_string(&main_path)?;
+    let configs = if main_path.exists() {
+        let content = fs::read_to_string(&main_path)
+            .with_context(|| format!("Cannot read {}", main_path.display()))?;
         match serde_yaml::from_str::<WatchConfigCollection>(&content) {
-            Ok(collection) => {
-                configs = collection.watchers;
-            }
+            Ok(collection) => collection.watchers,
             Err(e) => {
                 warn!("Failed to parse {}: {}", main_path.display(), e);
                 invalidate_and_replace(&main_path, &default_yaml, "watchers.yaml");
-                configs = default_watchers.watchers;
+                default_watchers.watchers
             }
         }
     } else {
-        fs::create_dir_all(main_path.parent().unwrap_or(Path::new("config")))?;
-        fs::write(&main_path, &default_yaml)?;
+        fs::create_dir_all(main_path.parent().unwrap_or(Path::new("config")))
+            .with_context(|| "Cannot create config directory")?;
+        fs::write(&main_path, &default_yaml)
+            .with_context(|| format!("Cannot write {}", main_path.display()))?;
         info!("Created default watcher config: {}", main_path.display());
-        configs = default_watchers.watchers;
-    }
+        default_watchers.watchers
+    };
 
     Ok(resolve_all_configs(configs, global))
 }
