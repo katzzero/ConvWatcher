@@ -1,6 +1,0 @@
-watchers:
-- name: default
-  watch_folder: ''
-  output_folder: ''
-  video:
-    video: []

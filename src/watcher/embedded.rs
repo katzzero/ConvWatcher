@@ -200,10 +200,9 @@ pub async fn run_embedded_scanner(
         reload_tx.clone(),
         main_configs,
     );
-    let mut ticker = tokio::time::interval(interval);
 
     loop {
-        ticker.tick().await;
+        tokio::time::sleep(interval).await;
         if let Err(e) = scanner.scan().await {
             warn!("Watch config scan error: {}", e);
         }

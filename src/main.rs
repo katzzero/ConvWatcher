@@ -182,10 +182,9 @@ async fn run() -> Result<()> {
         tokio::spawn(async move {
             let interval =
                 Duration::from_secs(global_for_reloader.config_refresh_interval_s);
-            let mut ticker = tokio::time::interval(interval);
 
             loop {
-                ticker.tick().await;
+                tokio::time::sleep(interval).await;
                 info!("Checking for config changes...");
 
                 if let Ok(new_configs) =

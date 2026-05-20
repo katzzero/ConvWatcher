@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 use log::{info, warn};
 
 use global::GlobalConfig;
-use watch::{WatchConfig, WatchConfigCollection, WatchType};
+use watch::{VideoRule, WatchConfig, WatchConfigCollection, WatchType};
 
 fn invalidate_and_replace(path: &Path, default_yaml: &str, label: &str) {
     let invalid_path = path.with_extension("yaml.invalid");
@@ -79,7 +79,24 @@ pub fn load_watch_configs(
             watch_folder: String::new(),
             output_folder: String::new(),
             watch_type: WatchType::Video {
-                video: Vec::new(),
+                video: vec![
+                    watch::VideoRule {
+                        format: None,
+                        input_extensions: vec![
+                            ".mp4".into(), ".avi".into(), ".mkv".into(), ".mov".into(),
+                            ".webm".into(), ".flv".into(), ".wmv".into(), ".mpeg".into(),
+                            ".mpg".into(), ".ts".into(), ".mts".into(), ".mxf".into(),
+                        ],
+                        output_ext: ".mp4".into(),
+                        codec: "libx264".into(),
+                        quality: "crf 23".into(),
+                        audio_codec: "aac".into(),
+                        audio_bitrate: "128k".into(),
+                        output_name_template: "{base}_{codec}_{num}.{ext}".into(),
+                        check_duration: true,
+                        min_duration_ratio: 0.9,
+                    },
+                ],
             },
         }],
     };
