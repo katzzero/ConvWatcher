@@ -5,6 +5,7 @@ services:
     image: ghcr.io/katzzero/convwatcher:latest
     container_name: convwatcher
     restart: unless-stopped
+    user: "${UID:-1000}:${GID:-1000}"
     volumes:
       - ./config:/app/config
       - ./inputs:/app/inputs
