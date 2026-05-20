@@ -6,11 +6,10 @@ services:
     container_name: convwatcher
     restart: unless-stopped
     volumes:
-      - ./config:/app/config:ro
-      - ./watch:/app/watch
-      - ./output:/app/output
+      - ./config:/app/config
+      - ./inputs:/app/inputs
+      - ./outputs:/app/outputs
       - ./logs:/app/logs
-      - /data:/data:ro
     devices:
       - /dev/dri:/dev/dri
     environment:
