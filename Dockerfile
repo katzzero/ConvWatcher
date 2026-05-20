@@ -8,7 +8,6 @@ WORKDIR /app
 
 COPY Cargo.toml Cargo.lock ./
 COPY src/ ./src/
-COPY config/ ./config/
 
 RUN if [ "$TARGETARCH" = "arm64" ]; then \
         rustup target add aarch64-unknown-linux-musl; \
