@@ -36,16 +36,11 @@ RUN apk add --no-cache \
     && pip install --no-cache-dir img2pdf --break-system-packages \
     && rm -rf /var/cache/apk/*
 
-RUN adduser -D -u 1000 convwatcher
-
 WORKDIR /app
 
 COPY --from=builder /convwatcher /usr/local/bin/convwatcher
 
-RUN mkdir -p /app/config /app/inputs /app/outputs /app/logs \
-    && chown -R convwatcher:convwatcher /app /usr/local/bin/convwatcher
-
-USER convwatcher
+RUN mkdir -p /app/config /app/inputs /app/outputs /app/logs
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:8080/health || exit 1
