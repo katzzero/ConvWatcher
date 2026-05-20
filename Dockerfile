@@ -33,6 +33,7 @@ RUN apk add --no-cache \
     py3-pip \
     wget \
     curl \
+    su-exec \
     && pip install --no-cache-dir img2pdf --break-system-packages \
     && rm -rf /var/cache/apk/*
 
@@ -45,12 +46,13 @@ COPY --from=builder /convwatcher /usr/local/bin/convwatcher
 RUN mkdir -p /app/config /app/inputs /app/outputs /app/logs \
     && chown -R convwatcher:convwatcher /app /usr/local/bin/convwatcher
 
-USER convwatcher
+COPY docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:8080/health || exit 1
 
 EXPOSE 8080
 
-ENTRYPOINT ["convwatcher"]
-CMD ["--no-daemon"]
+ENTRYPOINT ["docker-entrypoint.sh"]
+CMD ["convwatcher", "--no-daemon"]
