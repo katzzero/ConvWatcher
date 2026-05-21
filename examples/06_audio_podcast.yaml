@@ -1,0 +1,80 @@
+# ─────────────────────────────────────────────────────────────
+# ConvWatcher — Podcast / Audio Processing
+# Converts incoming audio files to multiple formats.
+# Demonstrates audio presets and explicit subfolder declarations.
+# ─────────────────────────────────────────────────────────────
+
+global:
+  file_check_interval: 2s
+  stable_time: 5s
+  ffmpeg_path: /usr/bin/ffmpeg
+  max_concurrent: 4
+  refresh_interval: 5m
+
+  codec_presets:
+    audio: audio_codecs.yaml
+
+  log:
+    errors_file: /app/logs/errors.log
+    max_log_files: 30
+    max_log_size_mb: 100
+    max_error_log_size_mb: 50
+
+  healthcheck:
+    http_port: 8080
+    bind_address: 0.0.0.0
+
+  disk_space:
+    check_interval: 60s
+    threshold: 500
+    check_output: false
+    check_watch: false
+
+  history:
+    persistent: false
+    file: /app/logs/history.json
+    max_records: 500
+
+watchers:
+  - name: podcast
+    watch_folder: /app/inputs/podcast/
+    output_folder: /app/outputs/podcast-output/
+    type: audio
+    subfolders:
+      - name: web
+        description: "Opus 128kbps for web streaming"
+      - name: voice
+        description: "Opus 96kbps optimized for voice"
+      - name: lossless
+        description: "FLAC for archival"
+      - name: apple
+        description: "AAC 256kbps for Apple platforms"
+    rules:
+      # Root — MP3 320kbps for distribution
+      - input_extensions: [.wav, .flac, .aiff, .aac, .ogg]
+        preset: mp3_320
+        output_name: "{base}.{ext}"
+
+      # ->web/ — Opus 128kbps for web streaming
+      - subfolder: web
+        input_extensions: [.wav, .flac, .mp3]
+        preset: opus_128
+        output_name: "{base}_web.{ext}"
+
+      # ->voice/ — Opus 96kbps optimized for voice
+      - subfolder: voice
+        input_extensions: [.wav, .flac, .mp3]
+        preset: opus_96
+        output_name: "{base}_voice.{ext}"
+
+      # ->lossless/ — FLAC for archival
+      - subfolder: lossless
+        input_extensions: [.wav, .aiff]
+        preset: flac
+        output_name: "{base}_lossless.{ext}"
+
+      # ->apple/ — AAC 256kbps for Apple platforms
+      - subfolder: apple
+        input_extensions: [.wav, .flac, .mp3]
+        preset: aac_256
+        output_name: "{base}_apple.{ext}"

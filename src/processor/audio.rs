@@ -33,12 +33,12 @@ pub async fn process_audio(
 
     let output_folder_path = PathBuf::from(output_folder);
     let base_name = get_base_name(&file_name);
-    let ext = rule.output_ext.trim_start_matches('.');
+    let ext = rule.output_ext.as_deref().unwrap_or(".mp3").trim_start_matches('.');
     let output_path = match OutputNamer::generate_path(
         &output_folder_path,
         &base_name,
-        &rule.output_name_template,
-        &rule.audio_codec,
+        rule.output_name.as_deref().unwrap_or("{base}_{codec}_{num}.{ext}"),
+        rule.audio_codec.as_deref().unwrap_or("libmp3lame"),
         ext,
     ) {
         Ok(p) => p,
@@ -106,12 +106,15 @@ fn build_audio_args(rule: &AudioRule) -> Vec<String> {
 
     args.push("-vn".to_string());
 
+    let audio_codec = rule.audio_codec.as_deref().unwrap_or("libmp3lame");
     args.push("-c:a".to_string());
-    args.push(rule.audio_codec.clone());
+    args.push(audio_codec.to_string());
 
-    if !rule.audio_bitrate.is_empty() {
-        args.push("-b:a".to_string());
-        args.push(rule.audio_bitrate.clone());
+    if audio_codec != "copy" {
+        if let Some(ref bitrate) = rule.audio_bitrate {
+            args.push("-b:a".to_string());
+            args.push(bitrate.clone());
+        }
     }
 
     if let Some(sr) = rule.sample_rate {
@@ -122,11 +125,6 @@ fn build_audio_args(rule: &AudioRule) -> Vec<String> {
     if let Some(ch) = rule.channels {
         args.push("-ac".to_string());
         args.push(ch.to_string());
-    }
-
-    if let Some(ref q) = rule.quality {
-        args.push("-q:a".to_string());
-        args.push(q.clone());
     }
 
     args

@@ -31,11 +31,11 @@ pub async fn process_image(
 
     let output_folder_path = PathBuf::from(output_folder);
     let base_name = get_base_name(&file_name);
-    let ext = rule.output_ext.trim_start_matches('.');
+    let ext = rule.output_ext.as_deref().unwrap_or(".png").trim_start_matches('.');
     let output_path = match OutputNamer::generate_path(
         &output_folder_path,
         &base_name,
-        &rule.output_name_template,
+        rule.output_name.as_deref().unwrap_or("{base}_conv.{ext}"),
         "image",
         ext,
     ) {
@@ -76,12 +76,12 @@ pub async fn process_image(
 fn convert_image(input: &Path, output: &Path, rule: &ImageRule) -> Result<()> {
     let mut img = image::open(input)?;
 
-    if !rule.transparent {
+    if !rule.transparent.unwrap_or(false) {
         img = DynamicImage::ImageRgba8(img.to_rgba8());
     }
 
-    let format = detect_format(&rule.output_ext);
-    save_image(&img, output, format, rule.quality)?;
+    let format = detect_format(&rule.output_ext.as_deref().unwrap_or(".png"));
+    save_image(&img, output, format, rule.quality.unwrap_or(90))?;
 
     Ok(())
 }

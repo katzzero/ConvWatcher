@@ -41,11 +41,8 @@ async fn run() -> Result<()> {
 
     info!("ConvWatcher v{} starting", env!("CARGO_PKG_VERSION"));
 
-    let global_config = config::load_global_config(cli.config.as_deref())?;
+    let (global_config, mut watch_configs, _registry) = config::load_config(cli.config.as_deref())?;
     info!("Global config loaded");
-
-    let mut watch_configs =
-        config::load_watch_configs(cli.config.as_deref(), &global_config)?;
     info!("Loaded {} watcher config(s)", watch_configs.len());
 
     if let Some(watch_folder) = &cli.watch {
@@ -53,8 +50,21 @@ async fn run() -> Result<()> {
             name: "quick".to_string(),
             watch_folder: watch_folder.clone(),
             output_folder: format!("{}-output", watch_folder.trim_end_matches('/')),
+            subfolders: Vec::new(),
             watch_type: config::watch::WatchType::Video {
-                video: Vec::new(),
+                rules: vec![config::watch::VideoRule {
+                    preset: "h264_cpu".to_string(),
+                    subfolder: None,
+                    input_extensions: vec![".mp4".into(), ".avi".into(), ".mkv".into(), ".mov".into(), ".mxf".into()],
+                    output_ext: None,
+                    codec: None,
+                    quality: None,
+                    audio_codec: None,
+                    audio_bitrate: None,
+                    output_name: None,
+                    check_duration: Some(true),
+                    min_duration_ratio: Some(0.9),
+                }],
             },
         };
         watch_configs.push(quick_config);
@@ -154,7 +164,8 @@ async fn run() -> Result<()> {
         let err_logger = error_logger.clone();
         let sem = semaphore.clone();
         let ffmpeg = global_config.ffmpeg_path.clone();
-        let ffprobe = global_config.ffprobe_path.clone();
+        let ffprobe = global_config.ffprobe_path.clone()
+            .unwrap_or_else(|| global_config.ffmpeg_path.clone());
 
         tokio::spawn(async move {
             process_jobs(job_rx, health, err_logger, disk_config_clone, sem, ffmpeg, ffprobe).await;
@@ -187,8 +198,8 @@ async fn run() -> Result<()> {
                 tokio::time::sleep(interval).await;
                 info!("Checking for config changes...");
 
-                if let Ok(new_configs) =
-                    config::load_watch_configs(cfg_path_for_reloader.as_deref(), &global_for_hotreload)
+                if let Ok((_, new_configs, _)) =
+                    config::load_config(cfg_path_for_reloader.as_deref())
                 {
                     let _ = reload_tx_clone.send(new_configs).await;
                 }
@@ -198,7 +209,7 @@ async fn run() -> Result<()> {
 
     let embedded_scanner_handle = {
         let reload_tx = reload_tx.clone();
-        let watchs_dir = global_config.watchs_dir.clone();
+        let watchs_dir = String::from("config/watchs");
         let secret = global_config.embedded_secret.clone();
         let scan_interval = global_config.embedded_scan_interval_s;
         let main_configs = watch_configs.clone();
@@ -322,8 +333,8 @@ async fn process_jobs(
         tokio::spawn(async move {
             let _permit = sem.acquire().await;
             match job.watch_type {
-                config::watch::WatchType::Video { video } => {
-                    for rule in &video {
+                config::watch::WatchType::Video { rules } => {
+                    for rule in &rules {
                         processor::video::process_video(
                             job.watcher_name.clone(),
                             job.file_name.clone(),
@@ -340,8 +351,8 @@ async fn process_jobs(
                         .await;
                     }
                 }
-                config::watch::WatchType::Image { image } => {
-                    for rule in &image {
+                config::watch::WatchType::Image { rules } => {
+                    for rule in &rules {
                         processor::image::process_image(
                             job.watcher_name.clone(),
                             job.file_name.clone(),
@@ -356,8 +367,8 @@ async fn process_jobs(
                         .await;
                     }
                 }
-                config::watch::WatchType::Audio { audio } => {
-                    for rule in &audio {
+                config::watch::WatchType::Audio { rules } => {
+                    for rule in &rules {
                         processor::audio::process_audio(
                             job.watcher_name.clone(),
                             job.file_name.clone(),
@@ -373,8 +384,8 @@ async fn process_jobs(
                         .await;
                     }
                 }
-                config::watch::WatchType::Pdf { pdf } => {
-                    for rule in &pdf {
+                config::watch::WatchType::Pdf { rules } => {
+                    for rule in &rules {
                         processor::pdf::process_pdf(
                             job.watcher_name.clone(),
                             job.file_name.clone(),
@@ -389,8 +400,8 @@ async fn process_jobs(
                         .await;
                     }
                 }
-                config::watch::WatchType::Document { document } => {
-                    for rule in &document {
+                config::watch::WatchType::Document { rules } => {
+                    for rule in &rules {
                         processor::document::process_document(
                             job.watcher_name.clone(),
                             job.file_name.clone(),
@@ -405,8 +416,8 @@ async fn process_jobs(
                         .await;
                     }
                 }
-                config::watch::WatchType::Custom { custom } => {
-                    for rule in &custom {
+                config::watch::WatchType::Custom { rules } => {
+                    for rule in &rules {
                         processor::external::process_external(
                             job.watcher_name.clone(),
                             job.file_name.clone(),

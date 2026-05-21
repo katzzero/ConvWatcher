@@ -32,11 +32,11 @@ pub async fn process_document(
 
     let output_folder_path = PathBuf::from(output_folder);
     let base_name = get_base_name(&file_name);
-    let ext = rule.output_ext.trim_start_matches('.');
+    let ext = rule.output_ext.as_deref().unwrap_or(".pdf").trim_start_matches('.');
     let output_path = match OutputNamer::generate_path(
         &output_folder_path,
         &base_name,
-        &rule.output_name_template,
+        rule.output_name.as_deref().unwrap_or("{base}_converted.{ext}"),
         "document",
         ext,
     ) {
@@ -83,7 +83,7 @@ async fn convert_document(input: &Path, output: &Path, rule: &DocumentRule) -> R
     cmd.arg("-o");
     cmd.arg(output.as_os_str());
 
-    if rule.toc {
+    if rule.toc.unwrap_or(false) {
         cmd.arg("--toc");
     }
 
@@ -99,7 +99,7 @@ async fn convert_document(input: &Path, output: &Path, rule: &DocumentRule) -> R
         cmd.arg(format!("--template={}", tmpl));
     }
 
-    if rule.standalone {
+    if rule.standalone.unwrap_or(false) {
         cmd.arg("-s");
     }
 

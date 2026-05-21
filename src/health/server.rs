@@ -350,79 +350,94 @@ fn read_tail(path: &str, lines: usize) -> Result<String> {
 
 pub fn watcher_info_from_config(config: &WatchConfig) -> WatcherInfo {
     let (type_name, rules) = match &config.watch_type {
-        WatchType::Video { video } => ("video", format_rules_video(video)),
-        WatchType::Image { image } => ("image", format_rules_image(image)),
-        WatchType::Audio { audio } => ("audio", format_rules_audio(audio)),
-        WatchType::Pdf { pdf } => ("pdf", format_rules_pdf(pdf)),
-        WatchType::Document { document } => ("document", format_rules_document(document)),
-        WatchType::Custom { custom } => ("custom", format_rules_custom(custom)),
+        WatchType::Video { rules } => ("video", format_rules_video(rules)),
+        WatchType::Image { rules } => ("image", format_rules_image(rules)),
+        WatchType::Audio { rules } => ("audio", format_rules_audio(rules)),
+        WatchType::Pdf { rules } => ("pdf", format_rules_pdf(rules)),
+        WatchType::Document { rules } => ("document", format_rules_document(rules)),
+        WatchType::Custom { rules } => ("custom", format_rules_custom(rules)),
     };
+
+    let mut all_rules = rules;
+    // Add subfolder info
+    for sf in &config.subfolders {
+        let desc = sf.description.as_deref().unwrap_or("");
+        all_rules.push(format!("->{}: {}", sf.name, desc));
+    }
 
     WatcherInfo {
         name: config.name.clone(),
         watch_folder: config.watch_folder.clone(),
         output_folder: config.output_folder.clone(),
         watch_type: type_name.to_string(),
-        rules,
+        rules: all_rules,
     }
 }
 
 fn format_rules_video(rules: &[crate::config::watch::VideoRule]) -> Vec<String> {
     rules.iter().map(|r| {
-        if let Some(ref fmt) = r.format {
-            format!("{} ({}, {})", fmt, r.codec, r.output_ext)
+        let codec = r.codec.as_deref().unwrap_or("(preset)");
+        let ext = r.output_ext.as_deref().unwrap_or("(preset)");
+        if let Some(ref fmt) = r.subfolder {
+            format!("{} ({}, {})", fmt, codec, ext)
         } else {
-            format!("{:?} -> {} ({})", r.input_extensions, r.output_ext, r.codec)
+            format!("{:?} -> {} ({})", r.input_extensions, ext, codec)
         }
     }).collect()
 }
 
 fn format_rules_image(rules: &[crate::config::watch::ImageRule]) -> Vec<String> {
     rules.iter().map(|r| {
-        if let Some(ref fmt) = r.format {
-            format!("{} ({}, q{})", fmt, r.output_ext, r.quality)
+        let ext = r.output_ext.as_deref().unwrap_or("(preset)");
+        if let Some(ref fmt) = r.subfolder {
+            format!("{} ({})", fmt, ext)
         } else {
-            format!("{:?} -> {} (q{})", r.input_extensions, r.output_ext, r.quality)
+            format!("{:?} -> {}", r.input_extensions, ext)
         }
     }).collect()
 }
 
 fn format_rules_audio(rules: &[crate::config::watch::AudioRule]) -> Vec<String> {
     rules.iter().map(|r| {
-        if let Some(ref fmt) = r.format {
-            format!("{} ({}, {})", fmt, r.audio_codec, r.audio_bitrate)
+        let codec = r.audio_codec.as_deref().unwrap_or("(preset)");
+        let ext = r.output_ext.as_deref().unwrap_or("(preset)");
+        if let Some(ref fmt) = r.subfolder {
+            format!("{} ({}, {})", fmt, codec, ext)
         } else {
-            format!("{:?} -> {} ({}, {})", r.input_extensions, r.output_ext, r.audio_codec, r.audio_bitrate)
+            format!("{:?} -> {} ({})", r.input_extensions, ext, codec)
         }
     }).collect()
 }
 
 fn format_rules_pdf(rules: &[crate::config::watch::PdfRule]) -> Vec<String> {
     rules.iter().map(|r| {
-        if let Some(ref fmt) = r.format {
+        let ext = r.output_ext.as_deref().unwrap_or("(preset)");
+        if let Some(ref fmt) = r.subfolder {
             format!("{} ({:?})", fmt, r.mode)
         } else {
-            format!("{:?} -> {} ({:?})", r.input_extensions, r.output_ext, r.mode)
+            format!("{:?} -> {} ({:?})", r.input_extensions, ext, r.mode)
         }
     }).collect()
 }
 
 fn format_rules_document(rules: &[crate::config::watch::DocumentRule]) -> Vec<String> {
     rules.iter().map(|r| {
-        if let Some(ref fmt) = r.format {
-            format!("{} -> {}", fmt, r.output_ext)
+        let ext = r.output_ext.as_deref().unwrap_or("(preset)");
+        if let Some(ref fmt) = r.subfolder {
+            format!("{} -> {}", fmt, ext)
         } else {
-            format!("{:?} -> {}", r.input_extensions, r.output_ext)
+            format!("{:?} -> {}", r.input_extensions, ext)
         }
     }).collect()
 }
 
 fn format_rules_custom(rules: &[crate::config::watch::CustomRule]) -> Vec<String> {
     rules.iter().map(|r| {
-        if let Some(ref fmt) = r.format {
-            format!("{}: {}", fmt, r.description.as_deref().unwrap_or(&r.command))
+        let desc = r.description.as_deref().unwrap_or(r.command.as_deref().unwrap_or("(preset)"));
+        if let Some(ref fmt) = r.subfolder {
+            format!("{}: {}", fmt, desc)
         } else {
-            format!("{:?}: {}", r.input_extensions, r.description.as_deref().unwrap_or(&r.command))
+            format!("{:?}: {}", r.input_extensions, desc)
         }
     }).collect()
 }

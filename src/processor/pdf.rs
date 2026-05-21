@@ -32,11 +32,11 @@ pub async fn process_pdf(
 
     let output_folder_path = PathBuf::from(output_folder);
     let base_name = get_base_name(&file_name);
-    let ext = rule.output_ext.trim_start_matches('.');
+    let ext = rule.output_ext.as_deref().unwrap_or(".pdf").trim_start_matches('.');
     let output_path = match OutputNamer::generate_path(
         &output_folder_path,
         &base_name,
-        &rule.output_name_template,
+        rule.output_name.as_deref().unwrap_or("{base}_converted.{ext}"),
         "pdf",
         ext,
     ) {
@@ -75,12 +75,14 @@ pub async fn process_pdf(
 }
 
 async fn dispatch_pdf_mode(input: &Path, output: &Path, rule: &PdfRule) -> Result<()> {
-    match rule.mode {
+    let mode = rule.mode.as_ref().unwrap_or(&PdfMode::Compress);
+    match mode {
         PdfMode::Compress => compress_pdf(input, output, rule.quality.as_ref()).await,
         PdfMode::PdfA => convert_to_pdfa(input, output, &rule.pdfa_version).await,
         PdfMode::ExtractText => extract_text(input, output).await,
         PdfMode::ExtractImages => extract_images(input, output, rule.resolution).await,
         PdfMode::ImageToPdf => images_to_pdf(input, output).await,
+        PdfMode::PdfToImages => pdf_to_images(input, output, rule.resolution).await,
         PdfMode::Merge => merge_pdfs(input, output).await,
         PdfMode::Linearize => linearize_pdf(input, output).await,
         PdfMode::Encrypt => encrypt_pdf(input, output, &rule.password).await,
@@ -263,6 +265,28 @@ async fn decrypt_pdf(input: &Path, output: &Path, password: &Option<String>) -> 
 
 async fn merge_pdfs(_input_dir: &Path, _output: &Path) -> Result<()> {
     bail!("PDF merge mode: place multiple PDFs in input folder")
+}
+
+async fn pdf_to_images(input: &Path, output: &Path, resolution: Option<u32>) -> Result<()> {
+    let dpi = resolution.unwrap_or(150);
+    let prefix = output.with_extension("");
+
+    let output_result = Command::new("pdftoppm")
+        .arg("-png")
+        .arg("-r")
+        .arg(dpi.to_string())
+        .arg(input.as_os_str())
+        .arg(prefix.as_os_str())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await?;
+
+    if !output_result.status.success() {
+        let stderr = String::from_utf8_lossy(&output_result.stderr);
+        bail!("pdftoppm failed: {}", stderr);
+    }
+    Ok(())
 }
 
 async fn analyze_pdf(input: &Path, _output: &Path) -> Result<()> {

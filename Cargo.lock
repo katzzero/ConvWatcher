@@ -336,7 +336,7 @@ dependencies = [
 
 [[package]]
 name = "convwatcher"
-version = "0.8.6"
+version = "0.8.11"
 dependencies = [
  "anyhow",
  "chrono",

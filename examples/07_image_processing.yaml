@@ -1,0 +1,72 @@
+# ─────────────────────────────────────────────────────────────
+# ConvWatcher — Image Processing Pipeline
+# Converts images to multiple formats with quality tiers.
+# Demonstrates image presets and explicit subfolder declarations.
+# ─────────────────────────────────────────────────────────────
+
+global:
+  file_check_interval: 2s
+  stable_time: 5s
+  ffmpeg_path: /usr/bin/ffmpeg
+  max_concurrent: 4
+  refresh_interval: 5m
+
+  codec_presets:
+    image: image_codecs.yaml
+
+  log:
+    errors_file: /app/logs/errors.log
+    max_log_files: 30
+    max_log_size_mb: 100
+    max_error_log_size_mb: 50
+
+  healthcheck:
+    http_port: 8080
+    bind_address: 0.0.0.0
+
+  disk_space:
+    check_interval: 60s
+    threshold: 500
+    check_output: false
+    check_watch: false
+
+  history:
+    persistent: false
+    file: /app/logs/history.json
+    max_records: 500
+
+watchers:
+  - name: images
+    watch_folder: /app/inputs/images/
+    output_folder: /app/outputs/images-output/
+    type: image
+    subfolders:
+      - name: web
+        description: "WebP 80% for web delivery"
+      - name: nextgen
+        description: "AVIF 80% for next-gen browsers"
+      - name: archive
+        description: "PNG lossless for archival"
+    rules:
+      # Root — JPEG 80% for general use
+      - input_extensions: [.tiff, .tif, .bmp, .heic, .png]
+        preset: jpeg_80
+        output_name: "{base}.{ext}"
+
+      # ->web/ — WebP 80% for web delivery
+      - subfolder: web
+        input_extensions: [.tiff, .png, .bmp, .heic]
+        preset: webp_80
+        output_name: "{base}_web.{ext}"
+
+      # ->nextgen/ — AVIF 80% for next-gen browsers
+      - subfolder: nextgen
+        input_extensions: [.tiff, .png, .bmp]
+        preset: avif_80
+        output_name: "{base}_avif.{ext}"
+
+      # ->archive/ — PNG lossless for archival
+      - subfolder: archive
+        input_extensions: [.tiff, .bmp, .heic, .webp]
+        preset: png
+        output_name: "{base}_archive.{ext}"

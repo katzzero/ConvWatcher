@@ -240,7 +240,7 @@ fn validate_and_promote_config(
         return;
     }
 
-    let watchs_dir = PathBuf::from(&global.watchs_dir);
+    let watchs_dir = PathBuf::from("config/watchs");
     if let Err(e) = std::fs::create_dir_all(&watchs_dir) {
         warn!("Failed to create watchs dir: {}", e);
         return;
@@ -298,12 +298,12 @@ fn create_job(
 
     if let Some(ref fmt) = subfolder_format {
         let matched = match &watch_config.watch_type {
-            WatchType::Video { video } => video.iter().find(|r| r.format.as_deref() == Some(fmt)).is_some(),
-            WatchType::Image { image } => image.iter().find(|r| r.format.as_deref() == Some(fmt)).is_some(),
-            WatchType::Audio { audio } => audio.iter().find(|r| r.format.as_deref() == Some(fmt)).is_some(),
-            WatchType::Pdf { pdf } => pdf.iter().find(|r| r.format.as_deref() == Some(fmt)).is_some(),
-            WatchType::Document { document } => document.iter().find(|r| r.format.as_deref() == Some(fmt)).is_some(),
-            WatchType::Custom { custom } => custom.iter().find(|r| r.format.as_deref() == Some(fmt)).is_some(),
+            WatchType::Video { rules } => rules.iter().any(|r| r.subfolder.as_deref() == Some(fmt)),
+            WatchType::Image { rules } => rules.iter().any(|r| r.subfolder.as_deref() == Some(fmt)),
+            WatchType::Audio { rules } => rules.iter().any(|r| r.subfolder.as_deref() == Some(fmt)),
+            WatchType::Pdf { rules } => rules.iter().any(|r| r.subfolder.as_deref() == Some(fmt)),
+            WatchType::Document { rules } => rules.iter().any(|r| r.subfolder.as_deref() == Some(fmt)),
+            WatchType::Custom { rules } => rules.iter().any(|r| r.subfolder.as_deref() == Some(fmt)),
         };
 
         if matched {
@@ -319,23 +319,23 @@ fn create_job(
     }
 
     let ext_matched = match &watch_config.watch_type {
-        WatchType::Video { video } => {
-            video.iter().any(|r| r.format.is_none() && r.input_extensions.contains(&file_ext))
+        WatchType::Video { rules } => {
+            rules.iter().any(|r| r.subfolder.is_none() && r.input_extensions.contains(&file_ext))
         }
-        WatchType::Image { image } => {
-            image.iter().any(|r| r.format.is_none() && r.input_extensions.contains(&file_ext))
+        WatchType::Image { rules } => {
+            rules.iter().any(|r| r.subfolder.is_none() && r.input_extensions.contains(&file_ext))
         }
-        WatchType::Audio { audio } => {
-            audio.iter().any(|r| r.format.is_none() && r.input_extensions.contains(&file_ext))
+        WatchType::Audio { rules } => {
+            rules.iter().any(|r| r.subfolder.is_none() && r.input_extensions.contains(&file_ext))
         }
-        WatchType::Pdf { pdf } => {
-            pdf.iter().any(|r| r.format.is_none() && r.input_extensions.contains(&file_ext))
+        WatchType::Pdf { rules } => {
+            rules.iter().any(|r| r.subfolder.is_none() && r.input_extensions.contains(&file_ext))
         }
-        WatchType::Document { document } => {
-            document.iter().any(|r| r.format.is_none() && r.input_extensions.contains(&file_ext))
+        WatchType::Document { rules } => {
+            rules.iter().any(|r| r.subfolder.is_none() && r.input_extensions.contains(&file_ext))
         }
-        WatchType::Custom { custom } => {
-            custom.iter().any(|r| r.format.is_none() && r.input_extensions.contains(&file_ext))
+        WatchType::Custom { rules } => {
+            rules.iter().any(|r| r.subfolder.is_none() && r.input_extensions.contains(&file_ext))
         }
     };
 
@@ -357,60 +357,29 @@ pub fn create_folders(watch_config: &WatchConfig) -> anyhow::Result<()> {
     std::fs::create_dir_all(&watch_config.watch_folder)?;
     std::fs::create_dir_all(&watch_config.output_folder)?;
 
-    match &watch_config.watch_type {
-        WatchType::Video { video } => {
-            for rule in video {
-                if let Some(ref fmt) = rule.format {
-                    let sub =
-                        PathBuf::from(&watch_config.watch_folder).join(format!("->{}", fmt));
-                    std::fs::create_dir_all(&sub)?;
-                }
-            }
-        }
-        WatchType::Image { image } => {
-            for rule in image {
-                if let Some(ref fmt) = rule.format {
-                    let sub =
-                        PathBuf::from(&watch_config.watch_folder).join(format!("->{}", fmt));
-                    std::fs::create_dir_all(&sub)?;
-                }
-            }
-        }
-        WatchType::Audio { audio } => {
-            for rule in audio {
-                if let Some(ref fmt) = rule.format {
-                    let sub =
-                        PathBuf::from(&watch_config.watch_folder).join(format!("->{}", fmt));
-                    std::fs::create_dir_all(&sub)?;
-                }
-            }
-        }
-        WatchType::Pdf { pdf } => {
-            for rule in pdf {
-                if let Some(ref fmt) = rule.format {
-                    let sub =
-                        PathBuf::from(&watch_config.watch_folder).join(format!("->{}", fmt));
-                    std::fs::create_dir_all(&sub)?;
-                }
-            }
-        }
-        WatchType::Document { document } => {
-            for rule in document {
-                if let Some(ref fmt) = rule.format {
-                    let sub =
-                        PathBuf::from(&watch_config.watch_folder).join(format!("->{}", fmt));
-                    std::fs::create_dir_all(&sub)?;
-                }
-            }
-        }
-        WatchType::Custom { custom } => {
-            for rule in custom {
-                if let Some(ref fmt) = rule.format {
-                    let sub =
-                        PathBuf::from(&watch_config.watch_folder).join(format!("->{}", fmt));
-                    std::fs::create_dir_all(&sub)?;
-                }
-            }
+    // Create declared subfolder directories
+    for sf in &watch_config.subfolders {
+        let sub = PathBuf::from(&watch_config.watch_folder).join(format!("->{}", sf.name));
+        std::fs::create_dir_all(&sub)?;
+    }
+
+    // Also create any subfolders referenced by rules but not declared
+    let declared_names: std::collections::HashSet<&str> =
+        watch_config.subfolders.iter().map(|s| s.name.as_str()).collect();
+
+    let rule_subfolders: Vec<&str> = match &watch_config.watch_type {
+        WatchType::Video { rules } => rules.iter().filter_map(|r| r.subfolder.as_deref()).collect(),
+        WatchType::Image { rules } => rules.iter().filter_map(|r| r.subfolder.as_deref()).collect(),
+        WatchType::Audio { rules } => rules.iter().filter_map(|r| r.subfolder.as_deref()).collect(),
+        WatchType::Pdf { rules } => rules.iter().filter_map(|r| r.subfolder.as_deref()).collect(),
+        WatchType::Document { rules } => rules.iter().filter_map(|r| r.subfolder.as_deref()).collect(),
+        WatchType::Custom { rules } => rules.iter().filter_map(|r| r.subfolder.as_deref()).collect(),
+    };
+
+    for sf_name in rule_subfolders {
+        if !declared_names.contains(sf_name) {
+            let sub = PathBuf::from(&watch_config.watch_folder).join(format!("->{}", sf_name));
+            std::fs::create_dir_all(&sub)?;
         }
     }
 
@@ -425,4 +394,120 @@ fn cleanup_stale_entries(file_states: &mut HashMap<PathBuf, FileState>, stable_t
         }
         first_seen.elapsed() < stale_threshold
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::watch::{VideoRule, WatchConfig, WatchType};
+
+    fn test_video_config() -> WatchConfig {
+        WatchConfig {
+            name: "test".to_string(),
+            subfolders: Vec::new(),
+            watch_folder: "/app/inputs/test/".to_string(),
+            output_folder: "/app/outputs/test/".to_string(),
+            watch_type: WatchType::Video {
+                rules: vec![
+                    VideoRule {
+                        preset: "h264_cpu".to_string(),
+                        subfolder: None,
+                        input_extensions: vec![".mp4".into(), ".mxf".into()],
+                        output_ext: None, codec: None, quality: None,
+                        audio_codec: None, audio_bitrate: None,
+                        output_name: None, check_duration: None,
+                        min_duration_ratio: None,
+                    },
+                    VideoRule {
+                        preset: "h264_nvenc".to_string(),
+                        subfolder: Some("gpu".to_string()),
+                        input_extensions: vec![".mxf".into()],
+                        output_ext: None, codec: None, quality: None,
+                        audio_codec: None, audio_bitrate: None,
+                        output_name: None, check_duration: None,
+                        min_duration_ratio: None,
+                    },
+                ],
+            },
+        }
+    }
+
+    #[test]
+    fn test_create_job_matches_by_extension() {
+        let config = test_video_config();
+        let file_path = PathBuf::from("/app/inputs/test/clip.mp4");
+        let job = create_job(&file_path, "clip.mp4", &config, "watcher_test");
+        assert!(job.is_some());
+        let job = job.unwrap();
+        assert_eq!(job.file_name, "clip.mp4");
+    }
+
+    #[test]
+    fn test_create_job_matches_by_subfolder_format() {
+        let config = test_video_config();
+        let file_path = PathBuf::from("/app/inputs/test/->gpu/broadcast.mxf");
+        let job = create_job(&file_path, "broadcast.mxf", &config, "watcher_test");
+        assert!(job.is_some());
+    }
+
+    #[test]
+    fn test_create_job_no_match_unknown_extension() {
+        let config = test_video_config();
+        let file_path = PathBuf::from("/app/inputs/test/clip.xyz");
+        let job = create_job(&file_path, "clip.xyz", &config, "watcher_test");
+        assert!(job.is_none());
+    }
+
+    #[test]
+    fn test_create_job_no_match_wrong_subfolder() {
+        // File in ->unknown/ subfolder but extension .xyz doesn't match any rule
+        // Subfolder format doesn't match, extension doesn't match → no job
+        let config = test_video_config();
+        let file_path = PathBuf::from("/app/inputs/test/->unknown/clip.xyz");
+        let job = create_job(&file_path, "clip.xyz", &config, "watcher_test");
+        assert!(job.is_none());
+    }
+
+    #[test]
+    fn test_create_folders_creates_subfolder_formats() {
+        let temp_dir = std::env::temp_dir().join(format!("cw_test_{}", std::process::id()));
+        let config = WatchConfig {
+            name: "test".to_string(),
+            subfolders: Vec::new(),
+            watch_folder: temp_dir.join("inputs").to_string_lossy().to_string() + "/",
+            output_folder: temp_dir.join("outputs").to_string_lossy().to_string() + "/",
+            watch_type: WatchType::Video {
+                rules: vec![
+                    VideoRule {
+                        preset: "h264_cpu".to_string(),
+                        subfolder: Some("h264".to_string()),
+                        input_extensions: vec![".mp4".into()],
+                        output_ext: None, codec: None, quality: None,
+                        audio_codec: None, audio_bitrate: None,
+                        output_name: None, check_duration: None,
+                        min_duration_ratio: None,
+                    },
+                    VideoRule {
+                        preset: "h265_cpu".to_string(),
+                        subfolder: Some("h265".to_string()),
+                        input_extensions: vec![".mp4".into()],
+                        output_ext: None, codec: None, quality: None,
+                        audio_codec: None, audio_bitrate: None,
+                        output_name: None, check_duration: None,
+                        min_duration_ratio: None,
+                    },
+                ],
+            },
+        };
+
+        let result = create_folders(&config);
+        assert!(result.is_ok());
+        assert!(PathBuf::from(&config.watch_folder).exists());
+        assert!(PathBuf::from(&config.output_folder).exists());
+        assert!(PathBuf::from(&config.watch_folder).join("->h264").exists());
+        assert!(PathBuf::from(&config.watch_folder).join("->h265").exists());
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
 }

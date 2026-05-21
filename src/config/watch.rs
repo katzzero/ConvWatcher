@@ -5,16 +5,25 @@ pub struct WatchConfigCollection {
     pub watchers: Vec<WatchConfig>,
 }
 
+/// Declares a subfolder that the watcher will create and use for rule matching.
+/// Files placed in `->{name}/` are processed by rules with `subfolder: <name>`.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Subfolder {
+    /// Subfolder name — creates `->{name}/` in the watch folder.
+    pub name: String,
+    /// Human-readable description (shown in dashboard).
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct WatchConfig {
     pub name: String,
-
-    #[serde(default)]
     pub watch_folder: String,
-
-    #[serde(default)]
     pub output_folder: String,
-
+    /// Declared subfolders — creates `->{name}/` directories automatically.
+    #[serde(default)]
+    pub subfolders: Vec<Subfolder>,
     #[serde(flatten)]
     pub watch_type: WatchType,
 }
@@ -24,33 +33,27 @@ pub struct WatchConfig {
 pub enum WatchType {
     #[serde(rename = "video")]
     Video {
-        #[serde(default)]
-        video: Vec<VideoRule>,
+        rules: Vec<VideoRule>,
     },
     #[serde(rename = "image")]
     Image {
-        #[serde(default)]
-        image: Vec<ImageRule>,
+        rules: Vec<ImageRule>,
     },
     #[serde(rename = "audio")]
     Audio {
-        #[serde(default)]
-        audio: Vec<AudioRule>,
+        rules: Vec<AudioRule>,
     },
     #[serde(rename = "pdf")]
     Pdf {
-        #[serde(default)]
-        pdf: Vec<PdfRule>,
+        rules: Vec<PdfRule>,
     },
     #[serde(rename = "document")]
     Document {
-        #[serde(default)]
-        document: Vec<DocumentRule>,
+        rules: Vec<DocumentRule>,
     },
     #[serde(rename = "custom")]
     Custom {
-        #[serde(default)]
-        custom: Vec<CustomRule>,
+        rules: Vec<CustomRule>,
     },
 }
 
@@ -67,91 +70,87 @@ impl WatchType {
     }
 }
 
-fn default_output_ext() -> String { ".mp4".to_string() }
-fn default_codec() -> String { "libx264".to_string() }
-fn default_quality() -> String { "crf 23".to_string() }
-fn default_audio_codec() -> String { "aac".to_string() }
-fn default_audio_bitrate() -> String { "128k".to_string() }
-fn default_video_template() -> String { "{base}_{codec}_{num}.{ext}".to_string() }
-fn default_true() -> bool { true }
-fn default_min_duration_ratio() -> f64 { 0.9 }
-
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct VideoRule {
-    pub format: Option<String>,
+    pub preset: String,
+
+    /// Subfolder name — files in `->{subfolder}/` match this rule.
+    /// If None, matches files in the root watch folder by extension.
+    #[serde(default)]
+    pub subfolder: Option<String>,
 
     #[serde(default)]
     pub input_extensions: Vec<String>,
 
-    #[serde(default = "default_output_ext")]
-    pub output_ext: String,
+    #[serde(default)]
+    pub output_ext: Option<String>,
 
-    #[serde(default = "default_codec")]
-    pub codec: String,
+    #[serde(default)]
+    pub codec: Option<String>,
 
-    #[serde(default = "default_quality")]
-    pub quality: String,
+    #[serde(default)]
+    pub quality: Option<String>,
 
-    #[serde(default = "default_audio_codec")]
-    pub audio_codec: String,
+    #[serde(default)]
+    pub audio_codec: Option<String>,
 
-    #[serde(default = "default_audio_bitrate")]
-    pub audio_bitrate: String,
+    #[serde(default)]
+    pub audio_bitrate: Option<String>,
 
-    #[serde(default = "default_video_template")]
-    pub output_name_template: String,
+    #[serde(default)]
+    pub output_name: Option<String>,
 
-    #[serde(default = "default_true")]
-    pub check_duration: bool,
+    #[serde(default)]
+    pub check_duration: Option<bool>,
 
-    #[serde(default = "default_min_duration_ratio")]
-    pub min_duration_ratio: f64,
+    #[serde(default)]
+    pub min_duration_ratio: Option<f64>,
 }
 
-fn default_output_ext_png() -> String { ".png".to_string() }
-fn default_image_quality() -> u32 { 90 }
-fn default_image_template() -> String { "{base}_conv.{ext}".to_string() }
-
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ImageRule {
-    pub format: Option<String>,
+    pub preset: String,
+
+    #[serde(default)]
+    pub subfolder: Option<String>,
 
     #[serde(default)]
     pub input_extensions: Vec<String>,
 
-    #[serde(default = "default_output_ext_png")]
-    pub output_ext: String,
-
-    #[serde(default = "default_image_quality")]
-    pub quality: u32,
+    #[serde(default)]
+    pub output_ext: Option<String>,
 
     #[serde(default)]
-    pub transparent: bool,
+    pub quality: Option<u32>,
 
-    #[serde(default = "default_image_template")]
-    pub output_name_template: String,
+    #[serde(default)]
+    pub transparent: Option<bool>,
+
+    #[serde(default)]
+    pub output_name: Option<String>,
 }
 
-fn default_audio_ext() -> String { ".mp3".to_string() }
-fn default_audio_codec_rule() -> String { "libmp3lame".to_string() }
-fn default_audio_bitrate_rule() -> String { "192k".to_string() }
-fn default_audio_template() -> String { "{base}_{codec}_{num}.{ext}".to_string() }
-
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct AudioRule {
-    pub format: Option<String>,
+    pub preset: String,
+
+    #[serde(default)]
+    pub subfolder: Option<String>,
 
     #[serde(default)]
     pub input_extensions: Vec<String>,
 
-    #[serde(default = "default_audio_ext")]
-    pub output_ext: String,
+    #[serde(default)]
+    pub output_ext: Option<String>,
 
-    #[serde(default = "default_audio_codec_rule")]
-    pub audio_codec: String,
+    #[serde(default)]
+    pub audio_codec: Option<String>,
 
-    #[serde(default = "default_audio_bitrate_rule")]
-    pub audio_bitrate: String,
+    #[serde(default)]
+    pub audio_bitrate: Option<String>,
 
     #[serde(default)]
     pub sample_rate: Option<u32>,
@@ -160,27 +159,25 @@ pub struct AudioRule {
     pub channels: Option<u8>,
 
     #[serde(default)]
-    pub quality: Option<String>,
-
-    #[serde(default = "default_audio_template")]
-    pub output_name_template: String,
+    pub output_name: Option<String>,
 }
 
-fn default_pdf_ext() -> String { ".pdf".to_string() }
-fn default_pdf_template() -> String { "{base}_converted.{ext}".to_string() }
-
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct PdfRule {
-    pub format: Option<String>,
+    pub preset: String,
+
+    #[serde(default)]
+    pub subfolder: Option<String>,
 
     #[serde(default)]
     pub input_extensions: Vec<String>,
 
-    #[serde(default = "default_pdf_ext")]
-    pub output_ext: String,
+    #[serde(default)]
+    pub output_ext: Option<String>,
 
     #[serde(default)]
-    pub mode: PdfMode,
+    pub mode: Option<PdfMode>,
 
     #[serde(default)]
     pub quality: Option<PdfQuality>,
@@ -189,22 +186,16 @@ pub struct PdfRule {
     pub pdfa_version: Option<String>,
 
     #[serde(default)]
-    pub page_range: Option<String>,
-
-    #[serde(default)]
     pub resolution: Option<u32>,
 
     #[serde(default)]
     pub password: Option<String>,
 
     #[serde(default)]
-    pub options: Option<Vec<String>>,
-
-    #[serde(default = "default_pdf_template")]
-    pub output_name_template: String,
+    pub output_name: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum PdfMode {
     Compress,
@@ -212,6 +203,7 @@ pub enum PdfMode {
     ExtractText,
     ExtractImages,
     ImageToPdf,
+    PdfToImages,
     Merge,
     Linearize,
     Encrypt,
@@ -235,21 +227,22 @@ pub enum PdfQuality {
     Default,
 }
 
-fn default_doc_ext() -> String { ".pdf".to_string() }
-fn default_doc_template() -> String { "{base}_converted.{ext}".to_string() }
-
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct DocumentRule {
-    pub format: Option<String>,
+    pub preset: String,
+
+    #[serde(default)]
+    pub subfolder: Option<String>,
 
     #[serde(default)]
     pub input_extensions: Vec<String>,
 
-    #[serde(default = "default_doc_ext")]
-    pub output_ext: String,
+    #[serde(default)]
+    pub output_ext: Option<String>,
 
     #[serde(default)]
-    pub toc: bool,
+    pub toc: Option<bool>,
 
     #[serde(default)]
     pub toc_depth: Option<u8>,
@@ -261,7 +254,7 @@ pub struct DocumentRule {
     pub template: Option<String>,
 
     #[serde(default)]
-    pub standalone: bool,
+    pub standalone: Option<bool>,
 
     #[serde(default)]
     pub metadata: Option<Vec<String>>,
@@ -272,25 +265,29 @@ pub struct DocumentRule {
     #[serde(default)]
     pub options: Option<Vec<String>>,
 
-    #[serde(default = "default_doc_template")]
-    pub output_name_template: String,
+    #[serde(default)]
+    pub output_name: Option<String>,
 }
 
-fn default_custom_template() -> String { "{base}_custom.{ext}".to_string() }
-
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct CustomRule {
-    pub format: Option<String>,
+    pub preset: String,
+
+    #[serde(default)]
+    pub subfolder: Option<String>,
 
     #[serde(default)]
     pub input_extensions: Vec<String>,
 
-    pub output_ext: String,
+    #[serde(default)]
+    pub output_ext: Option<String>,
 
-    pub command: String,
+    #[serde(default)]
+    pub command: Option<String>,
 
-    #[serde(default = "default_custom_template")]
-    pub output_name_template: String,
+    #[serde(default)]
+    pub output_name: Option<String>,
 
     #[serde(default)]
     pub description: Option<String>,

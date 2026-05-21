@@ -1,0 +1,74 @@
+# ─────────────────────────────────────────────────────────────
+# ConvWatcher — GPU Encoding (NVIDIA NVENC)
+# Uses NVIDIA GPU for hardware-accelerated video encoding.
+# Audio is passed through (copy) — no re-encoding.
+# ─────────────────────────────────────────────────────────────
+
+global:
+  file_check_interval: 2s
+  stable_time: 5s
+  ffmpeg_path: /usr/bin/ffmpeg
+  max_concurrent: 4
+  refresh_interval: 5m
+
+  codec_presets:
+    video: video_codecs.yaml
+    audio: audio_codecs.yaml
+
+  log:
+    errors_file: /app/logs/errors.log
+    max_log_files: 30
+    max_log_size_mb: 100
+    max_error_log_size_mb: 50
+
+  healthcheck:
+    http_port: 8080
+    bind_address: 0.0.0.0
+
+  disk_space:
+    check_interval: 60s
+    threshold: 500
+    check_output: false
+    check_watch: false
+
+  history:
+    persistent: false
+    file: /app/logs/history.json
+    max_records: 500
+
+watchers:
+  - name: nvenc-h264
+    watch_folder: /app/inputs/nvenc/
+    output_folder: /app/outputs/nvenc-output/
+    type: video
+    rules:
+      # Standard H.264 via NVENC — fast, good quality
+      - input_extensions: [.mp4, .avi, .mkv, .mov, .mxf, .mts]
+        preset: h264_nvenc
+        output_name: "{base}_{codec}_{num}.{ext}"
+        check_duration: true
+        min_duration_ratio: 0.9
+
+  - name: nvenc-h265
+    watch_folder: /app/inputs/nvenc-hevc/
+    output_folder: /app/outputs/nvenc-hevc-output/
+    type: video
+    rules:
+      # H.265/HEVC via NVENC — smaller files, same quality
+      - input_extensions: [.mp4, .mkv, .mov, .mxf, .mts]
+        preset: h265_nvenc
+        output_name: "{base}_{codec}_{num}.{ext}"
+        check_duration: true
+        min_duration_ratio: 0.95
+
+  - name: nvenc-av1
+    watch_folder: /app/inputs/nvenc-av1/
+    output_folder: /app/outputs/nvenc-av1-output/
+    type: video
+    rules:
+      # AV1 via NVENC — best compression (RTX 40-series+)
+      - input_extensions: [.mp4, .mkv, .mov, .mxf]
+        preset: av1_nvenc
+        output_name: "{base}_{codec}_{num}.{ext}"
+        check_duration: true
+        min_duration_ratio: 0.9

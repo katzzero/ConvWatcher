@@ -34,11 +34,11 @@ pub async fn process_external(
 
     let output_folder_path = PathBuf::from(output_folder);
     let base_name = get_base_name(&file_name);
-    let ext = rule.output_ext.trim_start_matches('.');
+    let ext = rule.output_ext.as_deref().unwrap_or(".mp4").trim_start_matches('.');
     let output_path = match OutputNamer::generate_path(
         &output_folder_path,
         &base_name,
-        &rule.output_name_template,
+        rule.output_name.as_deref().unwrap_or("{base}_custom.{ext}"),
         "custom",
         ext,
     ) {
@@ -85,13 +85,14 @@ async fn execute_custom(
     file_name: &str,
     rule: &CustomRule,
 ) -> Result<()> {
-    validate_command_template(&rule.command)?;
+    let command = rule.command.as_deref()
+        .ok_or_else(|| anyhow::anyhow!("Custom rule has no command"))?;
+    validate_command_template(command)?;
 
     let basename = get_base_name(file_name);
-    let ext = rule.output_ext.trim_start_matches('.');
+    let ext = rule.output_ext.as_deref().unwrap_or(".mp4").trim_start_matches('.');
 
-    let expanded = rule
-        .command
+    let expanded = command
         .replace("{input}", &input.to_string_lossy())
         .replace("{output}", &output.to_string_lossy())
         .replace("{basename}", &basename)

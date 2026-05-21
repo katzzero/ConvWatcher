@@ -1,0 +1,80 @@
+# ─────────────────────────────────────────────────────────────
+# ConvWatcher — PDF Processing Pipeline
+# Compresses, converts, and extracts from PDFs.
+# Demonstrates PDF presets and explicit subfolder declarations.
+# ─────────────────────────────────────────────────────────────
+
+global:
+  file_check_interval: 2s
+  stable_time: 5s
+  ffmpeg_path: /usr/bin/ffmpeg
+  max_concurrent: 4
+  refresh_interval: 5m
+
+  codec_presets:
+    pdf: pdf_presets.yaml
+
+  log:
+    errors_file: /app/logs/errors.log
+    max_log_files: 30
+    max_log_size_mb: 100
+    max_error_log_size_mb: 50
+
+  healthcheck:
+    http_port: 8080
+    bind_address: 0.0.0.0
+
+  disk_space:
+    check_interval: 60s
+    threshold: 500
+    check_output: false
+    check_watch: false
+
+  history:
+    persistent: false
+    file: /app/logs/history.json
+    max_records: 500
+
+watchers:
+  - name: pdfs
+    watch_folder: /app/inputs/pdfs/
+    output_folder: /app/outputs/pdfs-output/
+    type: pdf
+    subfolders:
+      - name: print
+        description: "Print quality (300dpi)"
+      - name: archive
+        description: "PDF/A-2b for long-term archival"
+      - name: images
+        description: "Extract pages as PNG images (300dpi)"
+      - name: text
+        description: "Extract text content"
+    rules:
+      # Root — Compress to ebook quality (150dpi)
+      - input_extensions: [.pdf]
+        preset: pdf_ebook
+        output_name: "{base}_compressed.{ext}"
+
+      # ->print/ — Print quality (300dpi)
+      - subfolder: print
+        input_extensions: [.pdf]
+        preset: pdf_printer
+        output_name: "{base}_print.{ext}"
+
+      # ->archive/ — PDF/A-2b for long-term archival
+      - subfolder: archive
+        input_extensions: [.pdf]
+        preset: pdfa_2b
+        output_name: "{base}_pdfa.{ext}"
+
+      # ->images/ — Extract pages as PNG images (300dpi)
+      - subfolder: images
+        input_extensions: [.pdf]
+        preset: pdf_to_images_hd
+        output_name: "{base}_page_{num}.{ext}"
+
+      # ->text/ — Extract text content
+      - subfolder: text
+        input_extensions: [.pdf]
+        preset: pdf_extract_text
+        output_name: "{base}.{ext}"

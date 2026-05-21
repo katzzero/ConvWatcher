@@ -34,12 +34,12 @@ pub async fn process_video(
 
     let output_folder_path = PathBuf::from(output_folder);
     let base_name = get_base_name(&file_name);
-    let ext = rule.output_ext.trim_start_matches('.');
+    let ext = rule.output_ext.as_deref().unwrap_or(".mp4").trim_start_matches('.');
     let output_path = match OutputNamer::generate_path(
         &output_folder_path,
         &base_name,
-        &rule.output_name_template,
-        &rule.codec,
+        rule.output_name.as_deref().unwrap_or("{base}_{codec}_{num}.{ext}"),
+        rule.codec.as_deref().unwrap_or("libx264"),
         ext,
     ) {
         Ok(p) => p,
@@ -77,24 +77,26 @@ pub async fn process_video(
 }
 
 async fn convert_video(input: &Path, output: &Path, rule: &VideoRule, ffmpeg_path: &str, ffprobe_path: &str) -> Result<()> {
-    let quality_args = parse_quality_value(&rule.quality);
+    let quality = rule.quality.as_deref().unwrap_or("crf 23");
+    let quality_args = parse_quality_value(quality);
 
     let mut cmd = Command::new(ffmpeg_path);
     cmd.arg("-y")
         .arg("-i")
         .arg(input.as_os_str())
         .arg("-c:v")
-        .arg(&rule.codec);
+        .arg(rule.codec.as_deref().unwrap_or("libx264"));
 
     for arg in &quality_args {
         cmd.arg(arg);
     }
 
-    cmd.arg("-c:a")
-        .arg(&rule.audio_codec)
-        .arg("-b:a")
-        .arg(&rule.audio_bitrate)
-        .arg(output.as_os_str())
+    let audio_codec = rule.audio_codec.as_deref().unwrap_or("aac");
+    cmd.arg("-c:a").arg(audio_codec);
+    if audio_codec != "copy" {
+        cmd.arg("-b:a").arg(rule.audio_bitrate.as_deref().unwrap_or("128k"));
+    }
+    cmd.arg(output.as_os_str())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
@@ -105,16 +107,16 @@ async fn convert_video(input: &Path, output: &Path, rule: &VideoRule, ffmpeg_pat
         bail!("FFmpeg failed: {}", stderr);
     }
 
-    if rule.check_duration {
+    if rule.check_duration.unwrap_or(true) {
         let input_duration = get_video_duration(input, ffprobe_path).await.unwrap_or(0.0);
         let output_duration = get_video_duration(output, ffprobe_path).await.unwrap_or(0.0);
 
-        if input_duration > 0.0 && output_duration < input_duration * rule.min_duration_ratio {
+        if input_duration > 0.0 && output_duration < input_duration * rule.min_duration_ratio.unwrap_or(0.9) {
             bail!(
-                "Duration mismatch: input={:.1}s output={:.1}s (min ratio: {})",
+                "Duration mismatch: input={:.1}s output={:.1}s (min ratio: {:.2})",
                 input_duration,
                 output_duration,
-                rule.min_duration_ratio
+                rule.min_duration_ratio.unwrap_or(0.9)
             );
         }
     }
