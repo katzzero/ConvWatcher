@@ -23,22 +23,25 @@ A **daemon** that watches folders and automatically converts files based on YAML
 
 ```
 config/
-├── global.yaml              # Daemon-wide settings + secret
-├── watchers.yaml            # Manifesto: declares watchers + default rules
+├── config.yaml              # Single config file: global settings + watchers
+├── video_codecs.yaml        # Video codec presets
+├── audio_codecs.yaml        # Audio codec presets
+├── image_codecs.yaml        # Image format presets
+├── pdf_presets.yaml         # PDF processing presets
+├── document_presets.yaml    # Document conversion presets
 └── watchs/                  # Per-watcher overrides (promoted automatically)
-    └── videos.yaml
 
-./inputs/                    # Watch folders (default root)
-├── videos/                  # Each watcher = one type only
-├── fotos/
-├── musicas/
-├── pdfs/
-├── documentos/
-└── scripts/
+./inputs/                    # Watch folders
+├── videos/
+│   ├── ->gpu/               # Subfolder mode: drop files here for GPU encoding
+│   └── ->archive/           # Subfolder mode: drop files here for archival
+├── images/
+├── audio/
+└── ...
 
-./outputs/                   # Output folders (default root)
+./outputs/                   # Output folders
 ├── videos-output/
-├── fotos-output/
+├── images-output/
 └── ...
 ```
 
@@ -86,89 +89,172 @@ docker-compose up -d
 
 ## Configuration
 
-### Global Config (`config/global.yaml`)
+### Single Config File (`config/config.yaml`)
+
+All settings live in one file: global daemon settings + watcher definitions.
 
 ```yaml
-file_check_interval_ms: 2000      # Scan interval (2s)
-stable_time_ms: 5000              # File stability wait (5s)
-max_concurrent_conversions: 4     # Worker pool size
-config_refresh_interval_s: 300    # Hot-reload interval
+global:
+  file_check_interval: 2s       # Scan interval
+  stable_time: 5s               # File stability wait
+  ffmpeg_path: /usr/bin/ffmpeg
+  max_concurrent: 4             # Worker pool size
+  refresh_interval: 5m          # Hot-reload interval
 
-inputs_dir: "./inputs"            # Root for watch folders
-outputs_dir: "./outputs"          # Root for output folders
+  codec_presets:                # Preset files (relative to config/)
+    video: video_codecs.yaml
+    audio: audio_codecs.yaml
+    image: image_codecs.yaml
+    pdf: pdf_presets.yaml
+    document: document_presets.yaml
 
-scan_embedded_configs: true
-embedded_secret: "changeme"       # Secret for override validation
-watchs_dir: "./config/watchs"     # Override files directory
-embedded_scan_interval_s: 30      # Override scan interval
+  log:
+    errors_file: /app/logs/errors.log
 
-log:
-  errors_file: "./logs/errors.log"
+  healthcheck:
+    http_port: 8080
+    bind_address: 0.0.0.0
 
-healthcheck:
-  http_port: 8080
+  disk_space:
+    check_interval: 60s
+    threshold: 500              # MB
 
-disk_space:
-  check_interval_s: 60
-  threshold:
-    Gb: 5.0
+  history:
+    persistent: false
+    file: /app/logs/history.json
+    max_records: 500
+
+watchers:
+  - name: videos
+    watch_folder: /app/inputs/videos/
+    output_folder: /app/outputs/videos-output/
+    type: video
+    subfolders:
+      - name: gpu
+        description: "NVIDIA GPU encoding"
+      - name: archive
+        description: "HEVC archival"
+    rules:
+      - input_extensions: [.mp4, .avi, .mkv, .mov, .mxf]
+        preset: h264_cpu
+        output_name: "{base}_{codec}_{num}.{ext}"
+        check_duration: true
+        min_duration_ratio: 0.9
+
+      - subfolder: gpu
+        input_extensions: [.mxf, .mts, .mov]
+        preset: h264_nvenc
+
+      - subfolder: archive
+        input_extensions: [.mxf, .mts, .mkv]
+        preset: h265_cpu-high
 ```
 
-### Watcher Config (`config/watchers.yaml`)
+### Key Changes from v0.8
 
-Declares watchers with their type and default rules. Each entry is **single-type**:
+| Old (v0.8) | New (v0.9) |
+|------------|------------|
+| `config/global.yaml` + `config/watchers.yaml` | Single `config/config.yaml` |
+| Inline codec settings | `preset` references named presets |
+| `format` field for subfolder matching | `subfolder` field + explicit `subfolders` list |
+| Relative paths allowed | **Absolute paths required** |
+| Codec settings in rules | Codec presets in separate YAML files |
+
+### Codec Presets
+
+Presets are defined in separate YAML files under `config/`. Rules reference them by name:
+
+```yaml
+# config/video_codecs.yaml
+presets:
+  h264_cpu:
+    codec: libx264
+    quality: crf 23
+    audio_codec: aac
+    audio_bitrate: 128k
+    output_ext: .mp4
+    description: "H.264 CPU — general purpose"
+
+  h264_nvenc:
+    codec: h264_nvenc
+    quality: cq 23
+    audio_codec: copy
+    output_ext: .mp4
+    description: "H.264 NVENC — NVIDIA GPU"
+```
+
+**Built-in presets** cover: CPU (libx264, libx265, VP9, AV1), GPU (NVENC, VAAPI, AMF, QSV, VideoToolbox), audio (MP3, AAC, Opus, FLAC), images (JPEG, WebP, AVIF, PNG), PDF modes, and document conversions.
+
+**`audio_codec: copy`** passes through audio without re-encoding (skips bitrate flag).
+
+### Watcher Rules
+
+Every rule **must** specify a `preset`. Optional fields override the preset:
+
+```yaml
+rules:
+  # Minimal — just reference a preset
+  - input_extensions: [.mp4, .avi]
+    preset: h264_cpu
+
+  # Override specific settings
+  - input_extensions: [.mxf]
+    preset: h264_cpu
+    quality: "crf 18"           # Override preset quality
+    audio_codec: copy           # Pass through audio
+```
+
+### Subfolder Mode
+
+Declare subfolders in the watcher config. Files dropped in `->{name}/` match rules with `subfolder: <name>`:
 
 ```yaml
 watchers:
-  - name: videos                  # watch_folder = ./inputs/videos/
-    video:                        # TYPE: video only
+  - name: videos
+    watch_folder: /app/inputs/videos/
+    output_folder: /app/outputs/videos-output/
+    type: video
+    subfolders:
+      - name: gpu
+        description: "GPU encoding"
+      - name: archive
+        description: "High-quality archival"
+    rules:
       - input_extensions: [.mp4, .avi, .mkv]
-        output_ext: .mp4
-        codec: libx264
-        quality: "crf 23"
+        preset: h264_cpu                    # Root folder files
 
-  - name: fotos                   # watch_folder = ./inputs/fotos/
-    output_folder: ./galeria      # Custom output folder
-    image:                        # TYPE: image only
-      - input_extensions: [.jpg, .png, .webp]
-        output_ext: .png
-        quality: 90
+      - subfolder: gpu
+        input_extensions: [.mxf, .mov]
+        preset: h264_nvenc                  # ->gpu/ files
 
-  - name: musicas
-    audio:                        # TYPE: audio only
-      - input_extensions: [.wav, .flac]
-        output_ext: .mp3
-        audio_codec: libmp3lame
-        audio_bitrate: "320k"
-
-  - name: pdfs
-    pdf:                          # TYPE: pdf only
-      - input_extensions: [.pdf]
-        output_ext: .pdf
-        mode: compress
-        quality: ebook
-
-  - name: documentos
-    document:                     # TYPE: document only
-      - input_extensions: [.md, .docx]
-        output_ext: .pdf
-        toc: true
-
-  - name: scripts
-    custom:                       # TYPE: custom command only
-      - input_extensions: [.txt, .log]
-        output_ext: ".zip"
-        command: "zip -j {output} {input}"
+      - subfolder: archive
+        input_extensions: [.mxf, .mkv]
+        preset: h265_cpu-high               # ->archive/ files
 ```
 
-### Default paths
+Directory structure:
+```
+./inputs/videos/
+├── video.mp4          → matches root rule → h264_cpu
+├── ->gpu/
+│   └── broadcast.mxf  → matches gpu rule → h264_nvenc
+└── ->archive/
+    └── master.mxf     → matches archive rule → h265_cpu-high
+```
 
-| Field | Default |
-|-------|---------|
-| `watch_folder` | `./inputs/<name>/` |
-| `output_folder` | `./outputs/<name>-output/` |
+### Absolute Paths
 
-Both can be overridden per-watcher in the manifesto or via a `config/watchs/<name>.yaml` override.
+All paths **must** be absolute. Relative paths are rejected at startup:
+
+```yaml
+# Valid
+watch_folder: /app/inputs/videos/
+output_folder: /app/outputs/videos-output/
+
+# Invalid — will fail validation
+watch_folder: ./inputs/videos/
+output_folder: ../outputs/videos-output/
+```
 
 ---
 
@@ -178,64 +264,25 @@ To override rules for a specific watcher without editing the main config:
 
 1. Create a `.yaml` file named after the watcher: `config/watchs/videos.yaml`
 2. Include a `secret` field matching `global.embedded_secret`
-3. The type MUST match the manifesto type
-4. Rules in the override REPLACE the manifesto rules for that watcher
+3. The type MUST match the main config type
+4. Rules in the override REPLACE the main config rules for that watcher
 
 **Manual (admin):** Place the file directly in `config/watchs/videos.yaml`.
 
-**Self-service (user):** Drop `videos.yaml` in the watch folder root (`./inputs/videos/videos.yaml`). The system auto-validates and promotes it:
-
-```
-User drops ./inputs/videos/videos.yaml
-        │
-        ▼
-  System validates secret + type
-        │
-   ┌────┴────┐
-   ▼         ▼
- VALID     INVALID
-   │         │
-   ▼         ▼
- Copied    Creates
- to        videos.invalid
- config/   (empty file —
- watchs/   user deletes
-           to retry)
-   │
-   ▼
- Original renamed to videos.yaml.old (backup)
-   │
-   ▼
- Embedded Scanner detects new override → applies rules
-```
+**Self-service (user):** Drop `videos.yaml` in the watch folder root (`./inputs/videos/videos.yaml`). The system auto-validates and promotes it.
 
 ### Override format
 
 ```yaml
 # config/watchs/videos.yaml
 secret: "changeme"
-output_folder: ./saida_especial
-video:                                  # Must match manifesto type
+output_folder: /app/outputs/special/
+type: video
+rules:
   - input_extensions: [.mp4]
-    output_ext: .mp4
-    codec: libx265
-    quality: "crf 28"
+    preset: h265_cpu-high
+    quality: "crf 18"
 ```
-
----
-
-## Subfolder Mode
-
-Create `->format/` subfolders inside watch folders. Drop any file in and it matches that rule:
-
-```
-./inputs/videos/
-├── ->libx264/       # Drop any video → H.264 MP4
-├── ->hevc/          # Drop any video → HEVC MP4
-└── ->prores/        # Drop any video → ProRes MOV
-```
-
-The `format` field in the rule enables subfolder matching.
 
 ---
 
@@ -243,9 +290,9 @@ The `format` field in the rule enables subfolder matching.
 
 | Type | Input | Output | Engine |
 |------|-------|--------|--------|
-| **Video** | MP4, AVI, MKV, MOV, WebM, FLV, WMV, MPEG, TS, MTS | Any codec | FFmpeg |
-| **Image** | JPEG, PNG, GIF, BMP, TIFF, WebP, ICO, QOI, TGA | JPEG/PNG/GIF/BMP/TIFF/WebP/QOI | Rust `image` crate |
-| **Audio** | MP3, WAV, FLAC, AAC, OGG, Opus, WMA, M4A, AIFF, CAF | MP3/FLAC/WAV/AAC/OGG/Opus | FFmpeg |
+| **Video** | MP4, AVI, MKV, MOV, WebM, FLV, WMV, MPEG, TS, MTS, MXF | Any codec | FFmpeg |
+| **Image** | JPEG, PNG, GIF, BMP, TIFF, WebP, ICO, QOI, TGA, HEIC | JPEG/PNG/GIF/BMP/TIFF/WebP/QOI/AVIF/HEIF | Rust `image` crate |
+| **Audio** | MP3, WAV, FLAC, AAC, OGG, Opus, WMA, M4A, AIFF, CAF | MP3/FLAC/WAV/AAC/OGG/Opus/AC3 | FFmpeg |
 | **PDF** | PDF | Compress, PDF/A, extract, merge, encrypt | Ghostscript + QPDF + Poppler |
 | **Document** | DOCX, ODT, EPUB, MD, HTML, LaTeX | PDF, EPUB, DOCX, ODT, HTML, MD, LaTeX | Pandoc |
 | **Custom** | Any | Any | Arbitrary CLI command |
@@ -294,18 +341,40 @@ http://localhost:8080/dashboard
 
 ## Key Features
 
-- **Single-type watchers** — each watcher does one thing well
+- **Single config file** — `config/config.yaml` replaces split files
+- **Codec presets** — named presets in separate YAML files, referenced by rules
+- **Explicit subfolders** — declare `subfolders` in config, auto-creates `->name/` directories
+- **Absolute paths** — validates all paths at startup, rejects relative paths
 - **Per-watcher overrides** — `config/watchs/<name>.yaml` with secret validation
 - **Auto-promotion** — drop a config file in the watch folder, it gets validated and promoted
-- **Type safety** — overrides locked to manifesto type
+- **Type safety** — overrides locked to watcher type
 - **Hot Config Reload** — rescans configs periodically, dynamically restarts monitors
 - **File Stability Detection** — waits for files to finish uploading
 - **Worker Pool** — semaphore-based concurrency limiting
 - **Disk Space Monitor** — halts on low disk, auto-resumes
-- **Hardware Acceleration** — detects VAAPI/NVENC/QSV
+- **Hardware Acceleration** — detects VAAPI/NVENC/QSV/AMF/QSV/VideoToolbox
 - **Graceful Shutdown** — clean broadcast-channel shutdown
 - **Daemon Mode** — background execution with log-file output
 - **Multi-arch Docker** — AMD64 + ARM64
+
+---
+
+## Examples
+
+See `examples/` for ready-to-use configurations:
+
+| File | Description |
+|------|-------------|
+| `01_minimal_video.yaml` | Single video watcher, CPU encoding |
+| `02_full_pipeline.yaml` | All 6 watcher types with subfolders |
+| `03_gpu_nvenc.yaml` | NVIDIA GPU encoding presets |
+| `04_gpu_vaapi.yaml` | Intel/AMD GPU via VAAPI |
+| `05_broadcast_mxf.yaml` | Broadcast MXF workflow |
+| `06_audio_podcast.yaml` | Audio conversion pipeline |
+| `07_image_processing.yaml` | Image format conversions |
+| `08_pdf_processing.yaml` | PDF compression and extraction |
+| `09_document_conversion.yaml` | Document to PDF pipeline |
+| `custom_presets.yaml` | Custom preset definitions |
 
 ---
 
