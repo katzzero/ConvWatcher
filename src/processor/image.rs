@@ -1,8 +1,10 @@
+use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Result;
 use image::{DynamicImage, ImageFormat};
+use image::codecs::jpeg::JpegEncoder;
 use log::{error, info};
 
 use crate::config::global::DiskSpaceConfig;
@@ -76,8 +78,10 @@ pub async fn process_image(
 fn convert_image(input: &Path, output: &Path, rule: &ImageRule) -> Result<()> {
     let mut img = image::open(input)?;
 
-    if !rule.transparent.unwrap_or(false) {
+    if rule.transparent.unwrap_or(false) {
         img = DynamicImage::ImageRgba8(img.to_rgba8());
+    } else {
+        img = DynamicImage::ImageRgb8(img.to_rgb8());
     }
 
     let format = detect_format(&rule.output_ext.as_deref().unwrap_or(".png"));
@@ -99,11 +103,13 @@ fn detect_format(ext: &str) -> ImageFormat {
     }
 }
 
-fn save_image(img: &DynamicImage, path: &Path, format: ImageFormat, _quality: u32) -> Result<()> {
+fn save_image(img: &DynamicImage, path: &Path, format: ImageFormat, quality: u32) -> Result<()> {
     match format {
         ImageFormat::Jpeg => {
-            let mut buf = std::io::BufWriter::new(std::fs::File::create(path)?);
-            img.write_to(&mut buf, image::ImageFormat::Jpeg)?;
+            let file = std::fs::File::create(path)?;
+            let mut buf = BufWriter::new(file);
+            let encoder = JpegEncoder::new_with_quality(&mut buf, quality.min(100).max(1) as u8);
+            img.write_with_encoder(encoder)?;
         }
         ImageFormat::Png => {
             img.save_with_format(path, ImageFormat::Png)?;

@@ -4,80 +4,243 @@
 # Uses explicit subfolder declarations for different delivery formats.
 # ─────────────────────────────────────────────────────────────
 
+# Configurações globais do ConvWatcher.
+# Afetam todos os watchers definidos neste arquivo.
 global:
+  # Intervalo de varredura das pastas monitoradas.
+  # Formato: <numero> + sufixo (s=segundos, ms=milissegundos, m=minutos)
+  # Default: 2s
+  # Opcional
   file_check_interval: 2s
+  # Tempo que o arquivo deve ficar estável (sem alterações) antes de converter.
+  # Formato: <numero> + sufixo (s=segundos, ms=milissegundos)
+  # Default: 5s
+  # Opcional
   stable_time: 5s
+  # Caminho absoluto do binário FFmpeg.
+  # Formato: string com caminho completo
+  # Default: /usr/bin/ffmpeg
+  # Obrigatório
   ffmpeg_path: /usr/bin/ffmpeg
+  # Máximo de conversões simultâneas.
+  # Formato: inteiro positivo
+  # Default: 4
+  # Opcional
   max_concurrent: 4
+  # Intervalo para recarregar arquivos de preset (codec_presets).
+  # Formato: <numero> + sufixo (s=segundos, m=minutos)
+  # Default: 5m
+  # Opcional
   refresh_interval: 5m
 
   codec_presets:
+    # Caminho do arquivo de presets de vídeo.
+    # Formato: string (relativo ao diretório config/)
+    # Default: video_codecs.yaml
+    # Obrigatório
     video: video_codecs.yaml
 
   log:
+    # Arquivo de log de erros do FFmpeg.
+    # Formato: caminho absoluto
+    # Default: ./logs/errors.log
+    # Obrigatório
     errors_file: /app/logs/errors.log
+    # Máximo de arquivos de log rotacionados.
+    # Formato: inteiro positivo
+    # Default: 30
+    # Opcional
     max_log_files: 30
+    # Tamanho máximo de cada arquivo de log (MB).
+    # Formato: inteiro positivo (megabytes)
+    # Default: 100
+    # Opcional
     max_log_size_mb: 100
+    # Tamanho máximo do arquivo de log de erros (MB).
+    # Formato: inteiro positivo (megabytes)
+    # Default: 50
+    # Opcional
     max_error_log_size_mb: 50
 
   healthcheck:
+    # Porta do servidor HTTP de healthcheck.
+    # Formato: inteiro (porta TCP)
+    # Default: 8080
+    # Opcional
     http_port: 8080
+    # Endereço de bind do servidor HTTP.
+    # Formato: endereço IP (string)
+    # Default: "0.0.0.0"
+    # Opcional
     bind_address: 0.0.0.0
 
   disk_space:
+    # Intervalo entre verificações de espaço em disco.
+    # Formato: <numero> + sufixo (s=segundos, m=minutos)
+    # Default: 60s
+    # Opcional
     check_interval: 60s
+    # Limite mínimo de espaço livre antes de emitir alerta.
+    # Formato: <numero> (MB), "<numero>GB" ou "<numero>%"
+    # Default: 500
+    # Opcional
     threshold: 500
+    # Verificar espaço na pasta de saída.
+    # Formato: true/false
+    # Default: false
+    # Opcional
     check_output: true
+    # Verificar espaço na pasta monitorada.
+    # Formato: true/false
+    # Default: false
+    # Opcional
     check_watch: true
 
   history:
+    # Persistir histórico de conversões em disco.
+    # Formato: true/false
+    # Default: false
+    # Opcional
     persistent: true
+    # Caminho do arquivo de histórico (JSON).
+    # Formato: caminho absoluto
+    # Default: ./logs/history.json
+    # Opcional (obrigatório se persistent: true)
     file: /app/logs/history.json
+    # Máximo de registros mantidos no histórico.
+    # Formato: inteiro positivo
+    # Default: 500
+    # Opcional
     max_records: 2000
 
+# Lista de watchers. Cada watcher monitora uma pasta e aplica regras.
 watchers:
+  # Nome único do watcher (usado em logs e dashboard).
+  # Formato: string alfanumérica com hífens
+  # Obrigatório
   - name: broadcast
+    # Caminho absoluto da pasta monitorada.
+    # Arquivos colocados aqui são convertidos automaticamente.
+    # Obrigatório
     watch_folder: /app/inputs/broadcast/
+    # Caminho absoluto da pasta de saída.
+    # Arquivos convertidos são salvos aqui.
+    # Obrigatório
     output_folder: /app/outputs/broadcast-output/
+    # Tipo de conversão.
+    # Valores: video, image, audio, pdf, document, custom
+    # Obrigatório
     type: video
+    # Subpastas declaradas para roteamento de regras.
+    # Cria diretórios ->{name}/ na watch_folder automaticamente.
+    # Opcional
     subfolders:
+      # Nome da subpasta (referenciado em rules[].subfolder).
+      # Formato: string alfanumérica
+      # Obrigatório (dentro de subfolders)
       - name: archive
+        # Descrição amigável da subpasta (exibida no dashboard).
+        # Formato: string
+        # Default: null
+        # Opcional
         description: "H.265 high-quality archival"
       - name: proxy
         description: "Low-res proxies for editing"
       - name: deliver
         description: "GPU-encoded for fast delivery"
+    # Regras de conversão avaliadas em ordem sequencial.
+    # A primeira regra compatível com o arquivo é aplicada.
     rules:
-      # Root — MXF/MTS to H.264 for web delivery
+      # ── Regra raiz: MXF/MTS para H.264 (web) ──
       - input_extensions: [.mxf, .mts, .mov]
-        preset: h264_cpu
+        # Obrigatório: Nome do preset definido em video_codecs.yaml.
+        preset: libx264
+        # Sobrescreve o parâmetro de qualidade do preset.
+        # Formato: string (ex: "crf 20", "cq 23", "qp 25")
+        # Default: herdado do preset
+        # Opcional
         quality: crf 20
+        # Sobrescreve o bitrate de áudio do preset.
+        # Formato: string + sufixo (k=kbps, ex: "192k", "128k")
+        # Default: herdado do preset
+        # Opcional
         audio_bitrate: 192k
+        # Template do nome do arquivo de saída.
+        # Placeholders: {base}, {codec}, {ext}, {num}
+        # Default: "{base}_{codec}_{num}.{ext}"
+        # Opcional
         output_name: "{base}_web_{num}.{ext}"
+        # Verificar duração do convertido vs. original.
+        # Formato: true/false
+        # Default: true
+        # Opcional
         check_duration: true
+        # Razão mínima aceitável (saída / entrada).
+        # Formato: float entre 0.0 e 1.0
+        # Default: 0.9
+        # Opcional (relevante apenas se check_duration: true)
         min_duration_ratio: 0.95
 
-      # ->archive/ — H.265 high-quality archival
+      # ── Regra archive/: H.265 alta qualidade ──
+      # Processa arquivos colocados em ->archive/.
       - subfolder: archive
+        # Nome da subpasta alvo.
+        # Arquivos em ->{subfolder}/ são roteados para esta regra.
+        # Opcional (ausente = regra para raiz da watch_folder)
         input_extensions: [.mxf, .mts, .mov]
-        preset: h265_cpu-high
+        # Obrigatório: Nome do preset em video_codecs.yaml.
+        preset: libx265_high
+        # Template do nome do arquivo de saída.
+        # Placeholders: {base}, {codec}, {ext}, {num}
+        # Default: "{base}_{codec}_{num}.{ext}"
+        # Opcional
         output_name: "{base}_archive_{num}.{ext}"
+        # Verificar duração do convertido vs. original.
+        # Formato: true/false
+        # Default: true
+        # Opcional
         check_duration: true
+        # Razão mínima aceitável (saída / entrada).
+        # Formato: float entre 0.0 e 1.0
+        # Default: 0.9
+        # Opcional
         min_duration_ratio: 0.98
 
-      # ->proxy/ — Low-res proxies for editing
+      # ── Regra proxy/: Proxies baixa resolução ──
       - subfolder: proxy
         input_extensions: [.mxf, .mts, .mov]
-        preset: h264_cpu
+        # Obrigatório: Nome do preset em video_codecs.yaml.
+        preset: libx264
+        # Sobrescreve a qualidade do preset (CRF mais alto = menor qualidade).
+        # Formato: "crf <valor>"
+        # Default: herdado do preset
+        # Opcional
         quality: crf 35
+        # Sobrescreve o bitrate de áudio do preset.
+        # Formato: string + sufixo (k=kbps)
+        # Default: herdado do preset
+        # Opcional
         audio_bitrate: 64k
         output_name: "{base}_proxy_{num}.{ext}"
+        # Verificar duração do convertido vs. original.
+        # Formato: true/false
+        # Default: true
+        # Opcional
         check_duration: false
 
-      # ->deliver/ — GPU-encoded for fast delivery
+      # ── Regra deliver/: Codificação GPU rápida ──
       - subfolder: deliver
         input_extensions: [.mxf, .mts]
+        # Obrigatório: Nome do preset em video_codecs.yaml.
         preset: h264_nvenc
         output_name: "{base}_deliver_{num}.{ext}"
+        # Verificar duração do convertido vs. original.
+        # Formato: true/false
+        # Default: true
+        # Opcional
         check_duration: true
+        # Razão mínima aceitável (saída / entrada).
+        # Formato: float entre 0.0 e 1.0
+        # Default: 0.9
+        # Opcional
         min_duration_ratio: 0.95

@@ -5,76 +5,277 @@
 # ─────────────────────────────────────────────────────────────
 
 global:
+  # Intervalo de varredura das pastas monitoradas.
+  # Formato: <numero> + sufixo (s=segundos, ms=milissegundos, m=minutos)
+  # Default: 2s | Opcional
   file_check_interval: 2s
+
+  # Tempo que um arquivo deve permanecer estável (sem modificações) antes de ser processado.
+  # Formato: <numero> + sufixo (s=segundos, m=minutos)
+  # Default: 5s | Opcional
   stable_time: 5s
+
+  # Caminho absoluto para o binário do FFmpeg.
+  # Formato: caminho completo do sistema
+  # Default: "ffmpeg" (detectado via PATH) | Opcional
   ffmpeg_path: /usr/bin/ffmpeg
+
+  # Número máximo de conversões executadas simultaneamente.
+  # Formato: inteiro >= 1
+  # Default: 2 | Opcional
   max_concurrent: 4
+
+  # Intervalo para recarregar os arquivos de preset do disco.
+  # Formato: <numero> + sufixo (s=segundos, m=minutos, h=horas)
+  # Default: 5m | Opcional
   refresh_interval: 5m
 
   codec_presets:
+    # Caminho (relativo ou absoluto) para o arquivo de presets de PDF.
+    # Formato: caminho YAML
+    # Default: Nenhum | Requerido se houver watchers do tipo "pdf"
     pdf: pdf_presets.yaml
 
   log:
+    # Arquivo onde os logs de erro serão gravados.
+    # Formato: caminho absoluto ou relativo
+    # Default: ./errors.log | Opcional
     errors_file: /app/logs/errors.log
+
+    # Número máximo de arquivos de log mantidos (rotação).
+    # Formato: inteiro >= 1
+    # Default: 30 | Opcional
     max_log_files: 30
+
+    # Tamanho máximo em MB para cada arquivo de log antes de rotacionar.
+    # Formato: inteiro > 0 (megabytes)
+    # Default: 100 | Opcional
     max_log_size_mb: 100
+
+    # Tamanho máximo em MB para o arquivo de log de erros antes de rotacionar.
+    # Formato: inteiro > 0 (megabytes)
+    # Default: 50 | Opcional
     max_error_log_size_mb: 50
 
   healthcheck:
+    # Porta HTTP para o endpoint de saúde (/health).
+    # Formato: inteiro (1-65535)
+    # Default: 8080 | Opcional
     http_port: 8080
+
+    # Endereço de bind para o servidor HTTP de healthcheck.
+    # Formato: endereço IPv4/IPv6
+    # Default: "0.0.0.0" | Opcional
     bind_address: 0.0.0.0
 
   disk_space:
+    # Intervalo entre verificações de espaço em disco.
+    # Formato: <numero> + sufixo (s=segundos, m=minutos)
+    # Default: 60s | Opcional
     check_interval: 60s
+
+    # Limite mínimo de espaço livre em MB. Abaixo deste valor, novas conversões são pausadas.
+    # Formato: inteiro > 0 (megabytes)
+    # Default: 500 | Opcional
     threshold: 500
+
+    # Verificar espaço em disco na pasta de saída.
+    # Formato: true ou false
+    # Default: false | Opcional
     check_output: false
+
+    # Verificar espaço em disco na pasta monitorada.
+    # Formato: true ou false
+    # Default: false | Opcional
     check_watch: false
 
   history:
+    # Se o histórico deve ser persistido em disco entre reinicializações.
+    # Formato: true ou false
+    # Default: false | Opcional
     persistent: false
+
+    # Caminho para o arquivo de histórico persistente.
+    # Formato: caminho absoluto ou relativo
+    # Default: ./history.json | Opcional (usado apenas se persistent: true)
     file: /app/logs/history.json
+
+    # Número máximo de registros mantidos no histórico.
+    # Formato: inteiro >= 1
+    # Default: 500 | Opcional
     max_records: 500
 
 watchers:
-  - name: pdfs
+  # ── Watcher: PDFs ─────────────────────────────────────────
+  - # Nome único do watcher. Usado em logs e relatórios.
+    # Formato: string (letras, números, hífens e underscores)
+    # Sem default | Requerido
+    name: pdfs
+
+    # Pasta monitorada em busca de novos arquivos.
+    # Formato: caminho absoluto
+    # Sem default | Requerido
     watch_folder: /app/inputs/pdfs/
+
+    # Pasta de saída para os arquivos convertidos (raiz).
+    # Formato: caminho absoluto
+    # Sem default | Requerido
     output_folder: /app/outputs/pdfs-output/
+
+    # Tipo de conversão. Define quais presets estão disponíveis.
+    # Formato: "audio" | "image" | "pdf" | "document" | "custom"
+    # Sem default | Requerido
     type: pdf
+    # Lista de subpastas de saída. Cada subpasta gera uma conversão adicional por arquivo.
+    # Formato: lista de objetos com "name" e "description"
+    # Default: [] (lista vazia) | Opcional
     subfolders:
+      # Nome da subpasta (diretório criado dentro de output_folder).
+      # Formato: string (sem espaços ou caracteres especiais)
+      # Sem default | Requerido em cada entrada
       - name: print
+        # Descrição legível para humanos. Usada em logs e relatórios.
+        # Formato: string livre
+        # Default: "" | Opcional
         description: "Print quality (300dpi)"
+
+      # Nome da subpasta (diretório criado dentro de output_folder).
+      # Formato: string (sem espaços ou caracteres especiais)
+      # Sem default | Requerido em cada entrada
       - name: archive
+        # Descrição legível para humanos. Usada em logs e relatórios.
+        # Formato: string livre
+        # Default: "" | Opcional
         description: "PDF/A-2b for long-term archival"
+
+      # Nome da subpasta (diretório criado dentro de output_folder).
+      # Formato: string (sem espaços ou caracteres especiais)
+      # Sem default | Requerido em cada entrada
       - name: images
+        # Descrição legível para humanos. Usada em logs e relatórios.
+        # Formato: string livre
+        # Default: "" | Opcional
         description: "Extract pages as PNG images (300dpi)"
+
+      # Nome da subpasta (diretório criado dentro de output_folder).
+      # Formato: string (sem espaços ou caracteres especiais)
+      # Sem default | Requerido em cada entrada
       - name: text
+        # Descrição legível para humanos. Usada em logs e relatórios.
+        # Formato: string livre
+        # Default: "" | Opcional
         description: "Extract text content"
+    # Regras de conversão. Cada regra combina extensões de entrada, subpasta de destino e preset.
+    # As regras são avaliadas em ordem; a primeira correspondente é usada.
+    # Formato: lista de objetos
+    # Default: [] | Opcional (sem regras = sem conversões)
     rules:
       # Root — Compress to ebook quality (150dpi)
+      # Extensões de arquivo que acionam esta regra.
+      # Formato: lista de extensões com ponto (ex: [.pdf])
+      # Sem default | Requerido
       - input_extensions: [.pdf]
+
+        # Nome do preset de codec a ser aplicado.
+        # Deve estar definido no arquivo de presets referenciado em codec_presets.
+        # Formato: string (nome do preset)
+        # Sem default | Requerido
         preset: pdf_ebook
+
+        # Template para o nome do arquivo de saída.
+        # Placeholders: {base} (nome original sem extensão), {ext} (extensão do preset), {num} (índice da página)
+        # Formato: string com placeholders
+        # Default: "{base}.{ext}" | Opcional
         output_name: "{base}_compressed.{ext}"
 
       # ->print/ — Print quality (300dpi)
+      # Subpasta de destino (deve corresponder a um nome em subfolders).
+      # Quando presente, esta regra só se aplica a arquivos roteados para esta subpasta.
+      # Formato: string (nome da subpasta)
+      # Default: Nenhum (regra aplicada à raiz) | Opcional
       - subfolder: print
+        # Extensões de arquivo que acionam esta regra.
+        # Formato: lista de extensões com ponto (ex: [.pdf])
+        # Sem default | Requerido
         input_extensions: [.pdf]
+
+        # Nome do preset de codec a ser aplicado.
+        # Deve estar definido no arquivo de presets referenciado em codec_presets.
+        # Formato: string (nome do preset)
+        # Sem default | Requerido
         preset: pdf_printer
+
+        # Template para o nome do arquivo de saída.
+        # Placeholders: {base} (nome original sem extensão), {ext} (extensão do preset), {num} (índice da página)
+        # Formato: string com placeholders
+        # Default: "{base}.{ext}" | Opcional
         output_name: "{base}_print.{ext}"
 
       # ->archive/ — PDF/A-2b for long-term archival
+      # Subpasta de destino (deve corresponder a um nome em subfolders).
+      # Quando presente, esta regra só se aplica a arquivos roteados para esta subpasta.
+      # Formato: string (nome da subpasta)
+      # Default: Nenhum (regra aplicada à raiz) | Opcional
       - subfolder: archive
+        # Extensões de arquivo que acionam esta regra.
+        # Formato: lista de extensões com ponto (ex: [.pdf])
+        # Sem default | Requerido
         input_extensions: [.pdf]
+
+        # Nome do preset de codec a ser aplicado.
+        # Deve estar definido no arquivo de presets referenciado em codec_presets.
+        # Formato: string (nome do preset)
+        # Sem default | Requerido
         preset: pdfa_2b
+
+        # Template para o nome do arquivo de saída.
+        # Placeholders: {base} (nome original sem extensão), {ext} (extensão do preset), {num} (índice da página)
+        # Formato: string com placeholders
+        # Default: "{base}.{ext}" | Opcional
         output_name: "{base}_pdfa.{ext}"
 
       # ->images/ — Extract pages as PNG images (300dpi)
+      # Subpasta de destino (deve corresponder a um nome em subfolders).
+      # Quando presente, esta regra só se aplica a arquivos roteados para esta subpasta.
+      # Formato: string (nome da subpasta)
+      # Default: Nenhum (regra aplicada à raiz) | Opcional
       - subfolder: images
+        # Extensões de arquivo que acionam esta regra.
+        # Formato: lista de extensões com ponto (ex: [.pdf])
+        # Sem default | Requerido
         input_extensions: [.pdf]
+
+        # Nome do preset de codec a ser aplicado.
+        # Deve estar definido no arquivo de presets referenciado em codec_presets.
+        # Formato: string (nome do preset)
+        # Sem default | Requerido
         preset: pdf_to_images_hd
+
+        # Template para o nome do arquivo de saída.
+        # Placeholders: {base} (nome original sem extensão), {ext} (extensão do preset), {num} (índice da página)
+        # Formato: string com placeholders
+        # Default: "{base}.{ext}" | Opcional
         output_name: "{base}_page_{num}.{ext}"
 
       # ->text/ — Extract text content
+      # Subpasta de destino (deve corresponder a um nome em subfolders).
+      # Quando presente, esta regra só se aplica a arquivos roteados para esta subpasta.
+      # Formato: string (nome da subpasta)
+      # Default: Nenhum (regra aplicada à raiz) | Opcional
       - subfolder: text
+        # Extensões de arquivo que acionam esta regra.
+        # Formato: lista de extensões com ponto (ex: [.pdf])
+        # Sem default | Requerido
         input_extensions: [.pdf]
+
+        # Nome do preset de codec a ser aplicado.
+        # Deve estar definido no arquivo de presets referenciado em codec_presets.
+        # Formato: string (nome do preset)
+        # Sem default | Requerido
         preset: pdf_extract_text
+
+        # Template para o nome do arquivo de saída.
+        # Placeholders: {base} (nome original sem extensão), {ext} (extensão do preset), {num} (índice da página)
+        # Formato: string com placeholders
+        # Default: "{base}.{ext}" | Opcional
         output_name: "{base}.{ext}"

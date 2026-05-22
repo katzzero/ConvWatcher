@@ -7,73 +7,259 @@
 # Custom presets file — place at config/custom_presets.yaml
 # Then reference by name in watcher rules: preset: handbrake
 
+# Lista de presets personalizados para watchers do tipo "custom".
+# Cada preset define um comando shell arbitrário a ser executado.
+# Formato: mapping de nome -> { command, output_ext, description }
+# Default: {} | Opcional
 presets:
   # ── HandBrake CLI ──
+  # Nome do preset. Referenciado em watcher rules como preset: handbrake.
+  # Formato: string (letras, números e underscores)
+  # Sem default | Requerido (é a chave do preset)
   handbrake:
+    # Comando shell a ser executado. Placeholders: {input} = arquivo de entrada, {output} = arquivo de saída.
+    # Formato: string com placeholders {input} e {output}
+    # Sem default | Requerido
     command: "HandBrakeCLI -i {input} -o {output} --encoder x264 --quality 22 --audio 1 --aencoder aac --ab 128"
+
+    # Extensão do arquivo de saída (incluindo o ponto).
+    # Formato: string começando com "." (ex: .mp4, .jpg)
+    # Sem default | Requerido
     output_ext: .mp4
+
+    # Descrição legível do preset. Usada em logs e relatórios.
+    # Formato: string livre
+    # Default: "" | Opcional
     description: "HandBrake — x264 CRF 22, AAC 128k"
 
+  # Nome do preset. Referenciado em watcher rules como preset: handbrake_nvenc.
+  # Formato: string (letras, números e underscores)
+  # Sem default | Requerido (é a chave do preset)
   handbrake_nvenc:
+    # Comando shell a ser executado. Placeholders: {input} = arquivo de entrada, {output} = arquivo de saída.
+    # Formato: string com placeholders {input} e {output}
+    # Sem default | Requerido
     command: "HandBrakeCLI -i {input} -o {output} --encoder nvenc_h264 --quality 23 --audio 1 --aencoder aac --ab 128"
+
+    # Extensão do arquivo de saída (incluindo o ponto).
+    # Formato: string começando com "." (ex: .mp4, .jpg)
+    # Sem default | Requerido
     output_ext: .mp4
+
+    # Descrição legível do preset. Usada em logs e relatórios.
+    # Formato: string livre
+    # Default: "" | Opcional
     description: "HandBrake — NVENC H.264, AAC 128k"
 
+  # Nome do preset. Referenciado em watcher rules como preset: handbrake_hevc.
+  # Formato: string (letras, números e underscores)
+  # Sem default | Requerido (é a chave do preset)
   handbrake_hevc:
+    # Comando shell a ser executado. Placeholders: {input} = arquivo de entrada, {output} = arquivo de saída.
+    # Formato: string com placeholders {input} e {output}
+    # Sem default | Requerido
     command: "HandBrakeCLI -i {input} -o {output} --encoder x265 --quality 28 --audio 1 --aencoder aac --ab 128"
+
+    # Extensão do arquivo de saída (incluindo o ponto).
+    # Formato: string começando com "." (ex: .mp4, .jpg)
+    # Sem default | Requerido
     output_ext: .mp4
+
+    # Descrição legível do preset. Usada em logs e relatórios.
+    # Formato: string livre
+    # Default: "" | Opcional
     description: "HandBrake — x265 CRF 28, AAC 128k"
 
   # ── ImageMagick ──
+  # Nome do preset. Referenciado em watcher rules como preset: magick_resize_1080p.
+  # Formato: string (letras, números e underscores)
+  # Sem default | Requerido (é a chave do preset)
   magick_resize_1080p:
+    # Comando shell a ser executado. Placeholders: {input} = arquivo de entrada, {output} = arquivo de saída.
+    # Formato: string com placeholders {input} e {output}
+    # Sem default | Requerido
     command: "magick {input} -resize 1920x1080 -quality 85 {output}"
+
+    # Extensão do arquivo de saída (incluindo o ponto).
+    # Formato: string começando com "." (ex: .mp4, .jpg)
+    # Sem default | Requerido
     output_ext: .jpg
+
+    # Descrição legível do preset. Usada em logs e relatórios.
+    # Formato: string livre
+    # Default: "" | Opcional
     description: "ImageMagick — resize to 1080p, JPEG 85%"
 
+  # Nome do preset. Referenciado em watcher rules como preset: magick_resize_720p.
+  # Formato: string (letras, números e underscores)
+  # Sem default | Requerido (é a chave do preset)
   magick_resize_720p:
+    # Comando shell a ser executado. Placeholders: {input} = arquivo de entrada, {output} = arquivo de saída.
+    # Formato: string com placeholders {input} e {output}
+    # Sem default | Requerido
     command: "magick {input} -resize 1280x720 -quality 80 {output}"
+
+    # Extensão do arquivo de saída (incluindo o ponto).
+    # Formato: string começando com "." (ex: .mp4, .jpg)
+    # Sem default | Requerido
     output_ext: .jpg
+
+    # Descrição legível do preset. Usada em logs e relatórios.
+    # Formato: string livre
+    # Default: "" | Opcional
     description: "ImageMagick — resize to 720p, JPEG 80%"
 
+  # Nome do preset. Referenciado em watcher rules como preset: magick_thumbnail.
+  # Formato: string (letras, números e underscores)
+  # Sem default | Requerido (é a chave do preset)
   magick_thumbnail:
+    # Comando shell a ser executado. Placeholders: {input} = arquivo de entrada, {output} = arquivo de saída.
+    # Formato: string com placeholders {input} e {output}
+    # Sem default | Requerido
     command: "magick {input} -resize 320x240 -quality 75 {output}"
+
+    # Extensão do arquivo de saída (incluindo o ponto).
+    # Formato: string começando com "." (ex: .mp4, .jpg)
+    # Sem default | Requerido
     output_ext: .jpg
+
+    # Descrição legível do preset. Usada em logs e relatórios.
+    # Formato: string livre
+    # Default: "" | Opcional
     description: "ImageMagick — 320x240 thumbnail"
 
+  # Nome do preset. Referenciado em watcher rules como preset: magick_convert.
+  # Formato: string (letras, números e underscores)
+  # Sem default | Requerido (é a chave do preset)
   magick_convert:
+    # Comando shell a ser executado. Placeholders: {input} = arquivo de entrada, {output} = arquivo de saída.
+    # Formato: string com placeholders {input} e {output}
+    # Sem default | Requerido
     command: "magick {input} -quality 90 {output}"
+
+    # Extensão do arquivo de saída (incluindo o ponto).
+    # Formato: string começando com "." (ex: .mp4, .jpg)
+    # Sem default | Requerido
     output_ext: .jpg
+
+    # Descrição legível do preset. Usada em logs e relatórios.
+    # Formato: string livre
+    # Default: "" | Opcional
     description: "ImageMagick — format conversion with quality"
 
   # ── FFprobe / Media Info ──
+  # Nome do preset. Referenciado em watcher rules como preset: ffprobe_json.
+  # Formato: string (letras, números e underscores)
+  # Sem default | Requerido (é a chave do preset)
   ffprobe_json:
+    # Comando shell a ser executado. Placeholders: {input} = arquivo de entrada, {output} = arquivo de saída.
+    # Formato: string com placeholders {input} e {output}
+    # Sem default | Requerido
     command: "ffprobe -v quiet -print_format json -show_format -show_streams {input} > {output}.json"
+
+    # Extensão do arquivo de saída (incluindo o ponto).
+    # Formato: string começando com "." (ex: .mp4, .jpg)
+    # Sem default | Requerido
     output_ext: .json
+
+    # Descrição legível do preset. Usada em logs e relatórios.
+    # Formato: string livre
+    # Default: "" | Opcional
     description: "Extract media metadata as JSON"
 
+  # Nome do preset. Referenciado em watcher rules como preset: ffprobe_duration.
+  # Formato: string (letras, números e underscores)
+  # Sem default | Requerido (é a chave do preset)
   ffprobe_duration:
+    # Comando shell a ser executado. Placeholders: {input} = arquivo de entrada, {output} = arquivo de saída.
+    # Formato: string com placeholders {input} e {output}
+    # Sem default | Requerido
     command: "ffprobe -v error -show_entries format=duration -of csv=p=0 {input} > {output}.txt"
+
+    # Extensão do arquivo de saída (incluindo o ponto).
+    # Formato: string começando com "." (ex: .mp4, .jpg)
+    # Sem default | Requerido
     output_ext: .txt
+
+    # Descrição legível do preset. Usada em logs e relatórios.
+    # Formato: string livre
+    # Default: "" | Opcional
     description: "Extract video duration"
 
   # ── SoX (Audio Processing) ──
+  # Nome do preset. Referenciado em watcher rules como preset: sox_resample_44k.
+  # Formato: string (letras, números e underscores)
+  # Sem default | Requerido (é a chave do preset)
   sox_resample_44k:
+    # Comando shell a ser executado. Placeholders: {input} = arquivo de entrada, {output} = arquivo de saída.
+    # Formato: string com placeholders {input} e {output}
+    # Sem default | Requerido
     command: "sox {input} -r 44100 -c 2 {output}"
+
+    # Extensão do arquivo de saída (incluindo o ponto).
+    # Formato: string começando com "." (ex: .mp4, .jpg)
+    # Sem default | Requerido
     output_ext: .wav
+
+    # Descrição legível do preset. Usada em logs e relatórios.
+    # Formato: string livre
+    # Default: "" | Opcional
     description: "SoX — resample to 44.1kHz stereo WAV"
 
+  # Nome do preset. Referenciado em watcher rules como preset: sox_normalize.
+  # Formato: string (letras, números e underscores)
+  # Sem default | Requerido (é a chave do preset)
   sox_normalize:
+    # Comando shell a ser executado. Placeholders: {input} = arquivo de entrada, {output} = arquivo de saída.
+    # Formato: string com placeholders {input} e {output}
+    # Sem default | Requerido
     command: "sox {input} --norm=-1 {output}"
+
+    # Extensão do arquivo de saída (incluindo o ponto).
+    # Formato: string começando com "." (ex: .mp4, .jpg)
+    # Sem default | Requerido
     output_ext: .wav
+
+    # Descrição legível do preset. Usada em logs e relatórios.
+    # Formato: string livre
+    # Default: "" | Opcional
     description: "SoX — normalize audio to -1dB"
 
+  # Nome do preset. Referenciado em watcher rules como preset: sox_fade.
+  # Formato: string (letras, números e underscores)
+  # Sem default | Requerido (é a chave do preset)
   sox_fade:
+    # Comando shell a ser executado. Placeholders: {input} = arquivo de entrada, {output} = arquivo de saída.
+    # Formato: string com placeholders {input} e {output}
+    # Sem default | Requerido
     command: "sox {input} {output} fade 0.5 0 0.5"
+
+    # Extensão do arquivo de saída (incluindo o ponto).
+    # Formato: string começando com "." (ex: .mp4, .jpg)
+    # Sem default | Requerido
     output_ext: .wav
+
+    # Descrição legível do preset. Usada em logs e relatórios.
+    # Formato: string livre
+    # Default: "" | Opcional
     description: "SoX — add 0.5s fade in/out"
 
   # ── User's Own Tools ──
+  # Nome do preset. Referenciado em watcher rules como preset: my_custom_tool.
+  # Formato: string (letras, números e underscores)
+  # Sem default | Requerido (é a chave do preset)
   my_custom_tool:
+    # Comando shell a ser executado. Placeholders: {input} = arquivo de entrada, {output} = arquivo de saída.
+    # Formato: string com placeholders {input} e {output}
+    # Sem default | Requerido
     command: "my-tool --input {input} --output {output} --preset fast --threads 4"
+
+    # Extensão do arquivo de saída (incluindo o ponto).
+    # Formato: string começando com "." (ex: .mp4, .jpg)
+    # Sem default | Requerido
     output_ext: .mp4
+
+    # Descrição legível do preset. Usada em logs e relatórios.
+    # Formato: string livre
+    # Default: "" | Opcional
     description: "Custom tool example — replace with your command"

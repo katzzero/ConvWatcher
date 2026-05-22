@@ -23,6 +23,8 @@ pub struct CodecPresetPaths {
     pub pdf: String,
     #[serde(default = "default_document_presets")]
     pub document: String,
+    #[serde(default = "default_custom_presets")]
+    pub custom: String,
 }
 
 fn default_video_presets() -> String { "video_codecs.yaml".to_string() }
@@ -30,6 +32,7 @@ fn default_audio_presets() -> String { "audio_codecs.yaml".to_string() }
 fn default_image_presets() -> String { "image_codecs.yaml".to_string() }
 fn default_pdf_presets() -> String { "pdf_presets.yaml".to_string() }
 fn default_document_presets() -> String { "document_presets.yaml".to_string() }
+fn default_custom_presets() -> String { "custom_presets.yaml".to_string() }
 
 impl Default for CodecPresetPaths {
     fn default() -> Self {
@@ -39,6 +42,7 @@ impl Default for CodecPresetPaths {
             image: default_image_presets(),
             pdf: default_pdf_presets(),
             document: default_document_presets(),
+            custom: default_custom_presets(),
         }
     }
 }
@@ -79,6 +83,7 @@ pub struct CodecRegistry {
     pub image: HashMap<String, CodecPreset>,
     pub pdf: HashMap<String, CodecPreset>,
     pub document: HashMap<String, CodecPreset>,
+    pub custom: HashMap<String, CodecPreset>,
 }
 
 impl CodecRegistry {
@@ -89,6 +94,7 @@ impl CodecRegistry {
             image: HashMap::new(),
             pdf: HashMap::new(),
             document: HashMap::new(),
+            custom: HashMap::new(),
         }
     }
 
@@ -100,14 +106,16 @@ impl CodecRegistry {
         registry.image = load_preset_file(&config_dir.join(&paths.image), "image")?;
         registry.pdf = load_preset_file(&config_dir.join(&paths.pdf), "pdf")?;
         registry.document = load_preset_file(&config_dir.join(&paths.document), "document")?;
+        registry.custom = load_preset_file(&config_dir.join(&paths.custom), "custom")?;
 
         info!(
-            "Codec presets loaded: video={}, audio={}, image={}, pdf={}, document={}",
+            "Codec presets loaded: video={}, audio={}, image={}, pdf={}, document={}, custom={}",
             registry.video.len(),
             registry.audio.len(),
             registry.image.len(),
             registry.pdf.len(),
             registry.document.len(),
+            registry.custom.len(),
         );
 
         Ok(registry)
@@ -295,7 +303,7 @@ pub fn resolve_custom_rule(
     output_ext: Option<String>,
     registry: &CodecRegistry,
 ) -> Result<CustomRule> {
-    let preset = registry.document.get(preset_name)
+    let preset = registry.custom.get(preset_name)
         .ok_or_else(|| anyhow::anyhow!("Custom preset '{}' not found in custom_presets.yaml", preset_name))?;
 
     let cmd = command.or_else(|| preset.command.clone())
@@ -452,7 +460,7 @@ mod tests {
 
     fn test_registry() -> CodecRegistry {
         let mut registry = CodecRegistry::new();
-        registry.video.insert("h264_cpu".to_string(), CodecPreset {
+        registry.video.insert("libx264".to_string(), CodecPreset {
             codec: Some("libx264".to_string()),
             quality: Some("crf 23".to_string()),
             audio_codec: Some("aac".to_string()),
@@ -497,7 +505,7 @@ mod tests {
     fn test_resolve_video_rule_from_preset() {
         let registry = test_registry();
         let rule = resolve_video_rule(
-            "h264_cpu", vec![".mp4".into()], None, None, None, None,
+            "libx264", vec![".mp4".into()], None, None, None, None,
             None, None, None, None, None, &registry,
         ).unwrap();
 
@@ -512,7 +520,7 @@ mod tests {
     fn test_resolve_video_rule_override_preset() {
         let registry = test_registry();
         let rule = resolve_video_rule(
-            "h264_cpu", vec![".mp4".into()], None, None, None, None,
+            "libx264", vec![".mp4".into()], None, None, None, None,
             None, Some("crf 18".to_string()), None, None, None, &registry,
         ).unwrap();
 
@@ -586,7 +594,7 @@ mod tests {
             watch_type: WatchType::Video {
                 rules: vec![
                     watch::VideoRule {
-                        preset: "h264_cpu".to_string(),
+                        preset: "libx264".to_string(),
                         subfolder: None,
                         input_extensions: vec![".mp4".into()],
                         output_ext: None, codec: None, quality: None,

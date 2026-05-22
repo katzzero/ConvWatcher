@@ -3,7 +3,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 
 use anyhow::{bail, Result};
-use log::{error, info};
+use log::{error, info, warn};
 use tokio::process::Command;
 
 use crate::config::global::DiskSpaceConfig;
@@ -79,13 +79,24 @@ pub async fn process_video(
 async fn convert_video(input: &Path, output: &Path, rule: &VideoRule, ffmpeg_path: &str, ffprobe_path: &str) -> Result<()> {
     let quality = rule.quality.as_deref().unwrap_or("crf 23");
     let quality_args = parse_quality_value(quality);
+    let codec = rule.codec.as_deref().unwrap_or("libx264");
+
+    let (hwaccel_pre, hwaccel_post) = build_hwaccel_args(codec);
 
     let mut cmd = Command::new(ffmpeg_path);
-    cmd.arg("-y")
-        .arg("-i")
-        .arg(input.as_os_str())
-        .arg("-c:v")
-        .arg(rule.codec.as_deref().unwrap_or("libx264"));
+    cmd.arg("-y");
+
+    for arg in &hwaccel_pre {
+        cmd.arg(arg);
+    }
+
+    cmd.arg("-i").arg(input.as_os_str());
+
+    for arg in &hwaccel_post {
+        cmd.arg(arg);
+    }
+
+    cmd.arg("-c:v").arg(codec);
 
     for arg in &quality_args {
         cmd.arg(arg);
@@ -132,11 +143,32 @@ pub fn parse_quality_value(quality_str: &str) -> Vec<String> {
     }
 
     let parts: Vec<&str> = trimmed.split_whitespace().collect();
+    let keyword = parts[0].to_lowercase();
 
-    match parts[0].to_lowercase().as_str() {
+    match keyword.as_str() {
         "crf" => {
             let value = parts.get(1).unwrap_or(&"23");
             vec!["-crf".to_string(), value.to_string()]
+        }
+        "cq" => {
+            let value = parts.get(1).unwrap_or(&"23");
+            vec!["-cq".to_string(), value.to_string()]
+        }
+        "qp" => {
+            let value = parts.get(1).unwrap_or(&"25");
+            vec!["-qp".to_string(), value.to_string()]
+        }
+        "qp_i" => {
+            let value = parts.get(1).unwrap_or(&"25");
+            vec!["-qp_i".to_string(), value.to_string()]
+        }
+        "qscale" => {
+            let value = parts.get(1).unwrap_or(&"4");
+            vec!["-qscale:v".to_string(), value.to_string()]
+        }
+        "constant_bit_rate" => {
+            let value = parts.get(1).unwrap_or(&"3000");
+            vec!["-b:v".to_string(), value.to_string()]
         }
         "vbr" => {
             let value = parts.get(1).unwrap_or(&"4");
@@ -144,16 +176,37 @@ pub fn parse_quality_value(quality_str: &str) -> Vec<String> {
         }
         _ => {
             let first = parts[0];
-            if first.ends_with('M') || first.ends_with('m') || first.ends_with('K')
-                || first.ends_with('k')
-            {
+            if first.ends_with('M') || first.ends_with('m') || first.ends_with('K') || first.ends_with('k') {
                 vec!["-b:v".to_string(), first.to_string()]
             } else if first.parse::<u32>().is_ok() {
                 vec!["-crf".to_string(), first.to_string()]
             } else {
+                warn!("Unknown quality format '{}' — falling back to -crf 23", quality_str);
                 vec!["-crf".to_string(), "23".to_string()]
             }
         }
+    }
+}
+
+/// Build hardware acceleration arguments for the given codec.
+/// Returns (pre_input_args, post_input_args) to position around -i <input>.
+fn build_hwaccel_args(codec: &str) -> (Vec<String>, Vec<String>) {
+    if codec.contains("_vaapi") {
+        (
+            vec!["-vaapi_device".to_string(), "/dev/dri/renderD128".to_string()],
+            vec!["-vf".to_string(), "format=nv12,hwupload".to_string()],
+        )
+    } else if codec.contains("_qsv") {
+        (
+            vec![
+                "-init_hw_device".to_string(), "qsv=qsv".to_string(),
+                "-hwaccel".to_string(), "qsv".to_string(),
+                "-hwaccel_output_format".to_string(), "qsv".to_string(),
+            ],
+            vec![],
+        )
+    } else {
+        (vec![], vec![])
     }
 }
 
@@ -176,4 +229,98 @@ pub async fn get_video_duration(path: &Path, ffprobe_path: &str) -> Result<f64> 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let duration: f64 = stdout.trim().parse().unwrap_or(0.0);
     Ok(duration)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_crf() {
+        assert_eq!(parse_quality_value("crf 23"), vec!["-crf", "23"]);
+        assert_eq!(parse_quality_value("crf 18"), vec!["-crf", "18"]);
+    }
+
+    #[test]
+    fn test_parse_cq_nvenc() {
+        assert_eq!(parse_quality_value("cq 23"), vec!["-cq", "23"]);
+        assert_eq!(parse_quality_value("cq 18"), vec!["-cq", "18"]);
+    }
+
+    #[test]
+    fn test_parse_qp_vaapi() {
+        assert_eq!(parse_quality_value("qp 25"), vec!["-qp", "25"]);
+        assert_eq!(parse_quality_value("qp 28"), vec!["-qp", "28"]);
+    }
+
+    #[test]
+    fn test_parse_qp_i_amf() {
+        assert_eq!(parse_quality_value("qp_i 25"), vec!["-qp_i", "25"]);
+        assert_eq!(parse_quality_value("qp_i 28"), vec!["-qp_i", "28"]);
+    }
+
+    #[test]
+    fn test_parse_qscale() {
+        assert_eq!(parse_quality_value("qscale 4"), vec!["-qscale:v", "4"]);
+    }
+
+    #[test]
+    fn test_parse_constant_bit_rate() {
+        assert_eq!(
+            parse_quality_value("constant_bit_rate 3000"),
+            vec!["-b:v", "3000"]
+        );
+        assert_eq!(
+            parse_quality_value("constant_bit_rate 5000"),
+            vec!["-b:v", "5000"]
+        );
+    }
+
+    #[test]
+    fn test_parse_vbr() {
+        assert_eq!(parse_quality_value("vbr 4"), vec!["-q:v", "4"]);
+    }
+
+    #[test]
+    fn test_parse_numeric_only() {
+        assert_eq!(parse_quality_value("23"), vec!["-crf", "23"]);
+        assert_eq!(parse_quality_value("28"), vec!["-crf", "28"]);
+    }
+
+    #[test]
+    fn test_parse_bitrate() {
+        assert_eq!(parse_quality_value("3000k"), vec!["-b:v", "3000k"]);
+        assert_eq!(parse_quality_value("5M"), vec!["-b:v", "5M"]);
+    }
+
+    #[test]
+    fn test_parse_empty() {
+        assert_eq!(parse_quality_value(""), vec!["-crf", "23"]);
+    }
+
+    #[test]
+    fn test_parse_unknown_fallback() {
+        assert_eq!(parse_quality_value("foo 42"), vec!["-crf", "23"]);
+    }
+
+    #[test]
+    fn test_hwaccel_vaapi() {
+        let (pre, post) = build_hwaccel_args("h264_vaapi");
+        assert!(pre.contains(&"-vaapi_device".to_string()));
+        assert!(post.contains(&"-vf".to_string()));
+    }
+
+    #[test]
+    fn test_hwaccel_qsv() {
+        let (pre, post) = build_hwaccel_args("hevc_qsv");
+        assert!(pre.contains(&"-init_hw_device".to_string()));
+        assert!(post.is_empty());
+    }
+
+    #[test]
+    fn test_hwaccel_none() {
+        let (pre, post) = build_hwaccel_args("libx264");
+        assert!(pre.is_empty());
+        assert!(post.is_empty());
+    }
 }

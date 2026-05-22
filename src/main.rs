@@ -332,105 +332,93 @@ async fn process_jobs(
 
         tokio::spawn(async move {
             let _permit = sem.acquire().await;
-            match job.watch_type {
-                config::watch::WatchType::Video { rules } => {
-                    for rule in &rules {
-                        processor::video::process_video(
-                            job.watcher_name.clone(),
-                            job.file_name.clone(),
-                            job.file_path.clone(),
-                            rule,
-                            &job.output_folder,
-                            &job.watch_folder,
-                            el.clone(),
-                            hs.clone(),
-                            &dc,
-                            &ffmpeg,
-                            &ffprobe,
-                        )
-                        .await;
-                    }
+            match job.matched_rule {
+                processor::job::MatchedRule::Video(ref rule) => {
+                    processor::video::process_video(
+                        job.watcher_name.clone(),
+                        job.file_name.clone(),
+                        job.file_path.clone(),
+                        rule,
+                        &job.output_folder,
+                        &job.watch_folder,
+                        el.clone(),
+                        hs.clone(),
+                        &dc,
+                        &ffmpeg,
+                        &ffprobe,
+                    )
+                    .await;
                 }
-                config::watch::WatchType::Image { rules } => {
-                    for rule in &rules {
-                        processor::image::process_image(
-                            job.watcher_name.clone(),
-                            job.file_name.clone(),
-                            job.file_path.clone(),
-                            rule,
-                            &job.output_folder,
-                            &job.watch_folder,
-                            el.clone(),
-                            hs.clone(),
-                            &dc,
-                        )
-                        .await;
-                    }
+                processor::job::MatchedRule::Image(ref rule) => {
+                    processor::image::process_image(
+                        job.watcher_name.clone(),
+                        job.file_name.clone(),
+                        job.file_path.clone(),
+                        rule,
+                        &job.output_folder,
+                        &job.watch_folder,
+                        el.clone(),
+                        hs.clone(),
+                        &dc,
+                    )
+                    .await;
                 }
-                config::watch::WatchType::Audio { rules } => {
-                    for rule in &rules {
-                        processor::audio::process_audio(
-                            job.watcher_name.clone(),
-                            job.file_name.clone(),
-                            job.file_path.clone(),
-                            rule,
-                            &job.output_folder,
-                            &job.watch_folder,
-                            el.clone(),
-                            hs.clone(),
-                            &dc,
-                            &ffmpeg,
-                        )
-                        .await;
-                    }
+                processor::job::MatchedRule::Audio(ref rule) => {
+                    processor::audio::process_audio(
+                        job.watcher_name.clone(),
+                        job.file_name.clone(),
+                        job.file_path.clone(),
+                        rule,
+                        &job.output_folder,
+                        &job.watch_folder,
+                        el.clone(),
+                        hs.clone(),
+                        &dc,
+                        &ffmpeg,
+                    )
+                    .await;
                 }
-                config::watch::WatchType::Pdf { rules } => {
-                    for rule in &rules {
-                        processor::pdf::process_pdf(
-                            job.watcher_name.clone(),
-                            job.file_name.clone(),
-                            job.file_path.clone(),
-                            rule,
-                            &job.output_folder,
-                            &job.watch_folder,
-                            el.clone(),
-                            hs.clone(),
-                            &dc,
-                        )
-                        .await;
-                    }
+                processor::job::MatchedRule::Pdf(ref rule) => {
+                    processor::pdf::process_pdf(
+                        job.watcher_name.clone(),
+                        job.file_name.clone(),
+                        job.file_path.clone(),
+                        rule,
+                        &job.output_folder,
+                        &job.watch_folder,
+                        el.clone(),
+                        hs.clone(),
+                        &dc,
+                    )
+                    .await;
                 }
-                config::watch::WatchType::Document { rules } => {
-                    for rule in &rules {
-                        processor::document::process_document(
-                            job.watcher_name.clone(),
-                            job.file_name.clone(),
-                            job.file_path.clone(),
-                            rule,
-                            &job.output_folder,
-                            &job.watch_folder,
-                            el.clone(),
-                            hs.clone(),
-                            &dc,
-                        )
-                        .await;
-                    }
+                processor::job::MatchedRule::Document(ref rule) => {
+                    processor::document::process_document(
+                        job.watcher_name.clone(),
+                        job.file_name.clone(),
+                        job.file_path.clone(),
+                        rule,
+                        &job.output_folder,
+                        &job.watch_folder,
+                        el.clone(),
+                        hs.clone(),
+                        &dc,
+                    )
+                    .await;
                 }
-                config::watch::WatchType::Custom { rules } => {
-                    for rule in &rules {
-                        processor::external::process_external(
-                            job.watcher_name.clone(),
-                            job.file_name.clone(),
-                            job.file_path.clone(),
-                            rule,
-                            &job.output_folder,
-                            &job.watch_folder,
-                            el.clone(),
-                            hs.clone(),
-                            &dc,
-                        )
-                        .await;
-                    }
+                processor::job::MatchedRule::Custom(ref rule) => {
+                    processor::external::process_external(
+                        job.watcher_name.clone(),
+                        job.file_name.clone(),
+                        job.file_path.clone(),
+                        rule,
+                        &job.output_folder,
+                        &job.watch_folder,
+                        el.clone(),
+                        hs.clone(),
+                        &dc,
+                    )
+                    .await;
                 }
             }
         });

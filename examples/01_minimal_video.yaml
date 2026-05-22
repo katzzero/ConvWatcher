@@ -5,44 +5,185 @@
 # ─────────────────────────────────────────────────────────────
 
 global:
+  # Intervalo de varredura das pastas monitoradas.
+  # O sistema verifica periodicamente se há arquivos novos ou modificados.
+  # Formato: <numero> + sufixo (s=segundos, ms=milissegundos, m=minutos)
+  # Default: 2s
+  # Opcional
   file_check_interval: 2s
+
+  # Tempo de estabilidade: quanto tempo após o arquivo parar de crescer
+  # antes de iniciar a conversão. Previne processar arquivos que ainda
+  # estão sendo copiados/uploadados.
+  # Formato: <numero> + sufixo (s, ms)
+  # Default: 5s
+  # Opcional
   stable_time: 5s
+
+  # Caminho absoluto do binário FFmpeg. Usado para conversão de vídeo e áudio.
+  # Formato: string (caminho absoluto)
+  # Default: /usr/bin/ffmpeg
+  # Opcional
   ffmpeg_path: /usr/bin/ffmpeg
+
+  # Número máximo de conversões executadas simultaneamente.
+  # Útil para limitar uso de CPU/GPU.
+  # Formato: inteiro >= 1
+  # Default: 4
+  # Opcional
   max_concurrent: 4
+
+  # Intervalo para recarregar arquivos de preset em disco.
+  # Permite alterar codecs sem reiniciar o serviço.
+  # Formato: <numero> + sufixo (s, m)
+  # Default: 5m
+  # Opcional
   refresh_interval: 5m
 
   codec_presets:
+    # Mapa de arquivos de preset por tipo de mídia.
+    # Cada tipo referencia um arquivo YAML separado com as definições
+    # de codecs, qualidades e extensões de saída.
+    # Formato: <tipo>: <caminho_arquivo>
+    # Obrigatório (pelo menos um tipo)
     video: video_codecs.yaml
 
   log:
+    # Arquivo onde logs de erro são escritos.
+    # Formato: string (caminho absoluto)
+    # Default: logs/errors.log (relativo ao diretório do app)
+    # Opcional
     errors_file: /app/logs/errors.log
+
+    # Número máximo de arquivos de log rotacionados mantidos.
+    # Formato: inteiro >= 1
+    # Default: 30
+    # Opcional
     max_log_files: 30
+
+    # Tamanho máximo de cada arquivo de log antes da rotação (em MB).
+    # Formato: inteiro >= 1
+    # Default: 100
+    # Opcional
     max_log_size_mb: 100
+
+    # Tamanho máximo do arquivo de log de erros antes da rotação (em MB).
+    # Formato: inteiro >= 1
+    # Default: 50
+    # Opcional
     max_error_log_size_mb: 50
 
   healthcheck:
+    # Porta HTTP para o endpoint de healthcheck.
+    # Usado por orquestradores (Docker/K8s) para monitorar o serviço.
+    # Formato: inteiro (porta TCP válida)
+    # Default: 8080
+    # Opcional
     http_port: 8080
+
+    # Endereço IP ao qual o servidor HTTP do healthcheck se liga.
+    # Use 0.0.0.0 para aceitar conexões de qualquer interface.
+    # Formato: string (endereço IPv4)
+    # Default: "0.0.0.0"
+    # Opcional
     bind_address: 0.0.0.0
 
   disk_space:
+    # Intervalo entre verificações de espaço em disco disponível.
+    # Formato: <numero> + sufixo (s, m)
+    # Default: 60s
+    # Opcional
     check_interval: 60s
+
+    # Limite mínimo de espaço livre em disco (em MB) antes de parar
+    # novas conversões.
+    # Formato: inteiro >= 0 (MB)
+    # Default: 500
+    # Opcional
     threshold: 500
+
+    # Se true, verifica espaço no disco da pasta de saída.
+    # Formato: booleano (true/false)
+    # Default: false
+    # Opcional
     check_output: false
+
+    # Se true, verifica espaço no disco das pastas monitoradas.
+    # Formato: booleano (true/false)
+    # Default: false
+    # Opcional
     check_watch: false
 
   history:
+    # Se true, mantém histórico persistente de conversões entre reinicializações.
+    # Formato: booleano (true/false)
+    # Default: false
+    # Opcional
     persistent: false
+
+    # Caminho do arquivo de histórico em disco (usado se persistent: true).
+    # Formato: string (caminho absoluto)
+    # Default: logs/history.json
+    # Opcional
     file: /app/logs/history.json
+
+    # Número máximo de registros mantidos no histórico.
+    # Registros mais antigos são removidos quando o limite é excedido.
+    # Formato: inteiro >= 1
+    # Default: 500
+    # Opcional
     max_records: 500
 
 watchers:
+  # ── Lista de watchers (monitores) ──
+  # Cada entrada define uma pasta monitorada, tipo de mídia, regras de
+  # conversão e comportamento. Múltiplos watchers podem operar em paralelo.
   - name: videos
+    # Nome único do watcher. Usado em logs e identificação interna.
+    # Formato: string (sem espaços ou caracteres especiais)
+    # Obrigatório
     watch_folder: /app/inputs/videos/
+    # Caminho absoluto da pasta a ser monitorada.
+    # Arquivos adicionados/modificados aqui disparam conversão.
+    # Formato: string (caminho absoluto)
+    # Obrigatório
     output_folder: /app/outputs/videos-output/
+    # Caminho absoluto da pasta onde os arquivos convertidos são salvos.
+    # Formato: string (caminho absoluto)
+    # Obrigatório
     type: video
+    # Tipo de mídia processada. Determina qual conjunto de presets
+    # será usado (vídeo, imagem, áudio, pdf, documento, custom).
+    # Valores aceitos: video, image, audio, pdf, document, custom
+    # Obrigatório
     rules:
+      # ── Lista de regras de conversão ──
+      # A primeira regra cujas extensões correspondem ao arquivo de
+      # entrada é usada. A ordem das regras importa.
       - input_extensions: [.mp4, .avi, .mkv, .mov, .mxf, .mts]
-        preset: h264_cpu
+        # Extensões de arquivo que disparam esta regra.
+        # O watcher ignora arquivos que não correspondem a nenhuma regra.
+        # Formato: lista de strings com ponto inicial (ex: .mp4)
+        # Obrigatório (pelo menos uma extensão, a menos que subfolder seja usado)
+        # Obrigatório: Nome do preset (definido no arquivo de presets).
+        # O preset define codec, qualidade, áudio, e extensão de saída.
+        preset: libx264
+        # Template do nome do arquivo de saída.
+        # Placeholders disponíveis: {base} (nome original sem extensão),
+        # {codec} (nome do codec), {num} (contador), {ext} (extensão de saída)
+        # Default: "{base}_{codec}_{num}.{ext}"
+        # Opcional
         output_name: "{base}_{codec}_{num}.{ext}"
+        # Verificar duração do output vs input para prevenir saída corrompida.
+        # Se a duração do vídeo convertido for muito menor que a do original,
+        # o arquivo é marcado como erro.
+        # Formato: booleano (true/false)
+        # Default: true
+        # Opcional
         check_duration: true
+        # Razão mínima aceitável de duração (output/input).
+        # 0.9 = output deve ter pelo menos 90% da duração do input.
+        # Formato: decimal entre 0.0 e 1.0
+        # Default: 0.9
+        # Opcional
         min_duration_ratio: 0.9

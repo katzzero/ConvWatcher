@@ -11,7 +11,7 @@ use crate::config::embedded::EmbeddedConfig;
 use crate::config::global::GlobalConfig;
 use crate::config::watch::{WatchConfig, WatchType};
 use crate::health::server::HealthServer;
-use crate::processor::job::ConversionJob;
+use crate::processor::job::{ConversionJob, MatchedRule};
 
 type FileState = (Instant, u64, u64);
 
@@ -278,12 +278,11 @@ fn create_invalid_marker(config_path: &Path, manifest: &WatchConfig) {
     }
 }
 
-fn create_job(
+fn find_matching_rule(
     file_path: &PathBuf,
-    file_name: &str,
-    watch_config: &WatchConfig,
-    watcher_name: &str,
-) -> Option<ConversionJob> {
+    _file_name: &str,
+    watch_type: &WatchType,
+) -> Option<MatchedRule> {
     let file_ext = file_path
         .extension()
         .map(|e| format!(".{}", e.to_string_lossy().to_lowercase()))
@@ -297,60 +296,46 @@ fn create_job(
         .map(|s| s[2..].to_lowercase());
 
     if let Some(ref fmt) = subfolder_format {
-        let matched = match &watch_config.watch_type {
-            WatchType::Video { rules } => rules.iter().any(|r| r.subfolder.as_deref() == Some(fmt)),
-            WatchType::Image { rules } => rules.iter().any(|r| r.subfolder.as_deref() == Some(fmt)),
-            WatchType::Audio { rules } => rules.iter().any(|r| r.subfolder.as_deref() == Some(fmt)),
-            WatchType::Pdf { rules } => rules.iter().any(|r| r.subfolder.as_deref() == Some(fmt)),
-            WatchType::Document { rules } => rules.iter().any(|r| r.subfolder.as_deref() == Some(fmt)),
-            WatchType::Custom { rules } => rules.iter().any(|r| r.subfolder.as_deref() == Some(fmt)),
+        let matched = match watch_type {
+            WatchType::Video { rules } => rules.iter().find(|r| r.subfolder.as_deref() == Some(fmt)).map(|r| MatchedRule::Video(r.clone())),
+            WatchType::Image { rules } => rules.iter().find(|r| r.subfolder.as_deref() == Some(fmt)).map(|r| MatchedRule::Image(r.clone())),
+            WatchType::Audio { rules } => rules.iter().find(|r| r.subfolder.as_deref() == Some(fmt)).map(|r| MatchedRule::Audio(r.clone())),
+            WatchType::Pdf { rules } => rules.iter().find(|r| r.subfolder.as_deref() == Some(fmt)).map(|r| MatchedRule::Pdf(r.clone())),
+            WatchType::Document { rules } => rules.iter().find(|r| r.subfolder.as_deref() == Some(fmt)).map(|r| MatchedRule::Document(r.clone())),
+            WatchType::Custom { rules } => rules.iter().find(|r| r.subfolder.as_deref() == Some(fmt)).map(|r| MatchedRule::Custom(r.clone())),
         };
 
-        if matched {
-            return Some(ConversionJob {
-                watcher_name: watcher_name.to_string(),
-                file_name: file_name.to_string(),
-                file_path: file_path.clone(),
-                watch_type: watch_config.watch_type.clone(),
-                output_folder: watch_config.output_folder.clone(),
-                watch_folder: watch_config.watch_folder.clone(),
-            });
+        if matched.is_some() {
+            return matched;
         }
     }
 
-    let ext_matched = match &watch_config.watch_type {
-        WatchType::Video { rules } => {
-            rules.iter().any(|r| r.subfolder.is_none() && r.input_extensions.contains(&file_ext))
-        }
-        WatchType::Image { rules } => {
-            rules.iter().any(|r| r.subfolder.is_none() && r.input_extensions.contains(&file_ext))
-        }
-        WatchType::Audio { rules } => {
-            rules.iter().any(|r| r.subfolder.is_none() && r.input_extensions.contains(&file_ext))
-        }
-        WatchType::Pdf { rules } => {
-            rules.iter().any(|r| r.subfolder.is_none() && r.input_extensions.contains(&file_ext))
-        }
-        WatchType::Document { rules } => {
-            rules.iter().any(|r| r.subfolder.is_none() && r.input_extensions.contains(&file_ext))
-        }
-        WatchType::Custom { rules } => {
-            rules.iter().any(|r| r.subfolder.is_none() && r.input_extensions.contains(&file_ext))
-        }
-    };
+    match watch_type {
+        WatchType::Video { rules } => rules.iter().find(|r| r.subfolder.is_none() && r.input_extensions.contains(&file_ext)).map(|r| MatchedRule::Video(r.clone())),
+        WatchType::Image { rules } => rules.iter().find(|r| r.subfolder.is_none() && r.input_extensions.contains(&file_ext)).map(|r| MatchedRule::Image(r.clone())),
+        WatchType::Audio { rules } => rules.iter().find(|r| r.subfolder.is_none() && r.input_extensions.contains(&file_ext)).map(|r| MatchedRule::Audio(r.clone())),
+        WatchType::Pdf { rules } => rules.iter().find(|r| r.subfolder.is_none() && r.input_extensions.contains(&file_ext)).map(|r| MatchedRule::Pdf(r.clone())),
+        WatchType::Document { rules } => rules.iter().find(|r| r.subfolder.is_none() && r.input_extensions.contains(&file_ext)).map(|r| MatchedRule::Document(r.clone())),
+        WatchType::Custom { rules } => rules.iter().find(|r| r.subfolder.is_none() && r.input_extensions.contains(&file_ext)).map(|r| MatchedRule::Custom(r.clone())),
+    }
+}
 
-    if ext_matched {
-        Some(ConversionJob {
+fn create_job(
+    file_path: &PathBuf,
+    file_name: &str,
+    watch_config: &WatchConfig,
+    watcher_name: &str,
+) -> Option<ConversionJob> {
+    find_matching_rule(file_path, file_name, &watch_config.watch_type).map(|rule| {
+        ConversionJob {
             watcher_name: watcher_name.to_string(),
             file_name: file_name.to_string(),
             file_path: file_path.clone(),
-            watch_type: watch_config.watch_type.clone(),
+            matched_rule: rule,
             output_folder: watch_config.output_folder.clone(),
             watch_folder: watch_config.watch_folder.clone(),
-        })
-    } else {
-        None
-    }
+        }
+    })
 }
 
 pub fn create_folders(watch_config: &WatchConfig) -> anyhow::Result<()> {
@@ -410,7 +395,7 @@ mod tests {
             watch_type: WatchType::Video {
                 rules: vec![
                     VideoRule {
-                        preset: "h264_cpu".to_string(),
+                        preset: "libx264".to_string(),
                         subfolder: None,
                         input_extensions: vec![".mp4".into(), ".mxf".into()],
                         output_ext: None, codec: None, quality: None,
@@ -479,7 +464,7 @@ mod tests {
             watch_type: WatchType::Video {
                 rules: vec![
                     VideoRule {
-                        preset: "h264_cpu".to_string(),
+                        preset: "libx264".to_string(),
                         subfolder: Some("h264".to_string()),
                         input_extensions: vec![".mp4".into()],
                         output_ext: None, codec: None, quality: None,
@@ -488,7 +473,7 @@ mod tests {
                         min_duration_ratio: None,
                     },
                     VideoRule {
-                        preset: "h265_cpu".to_string(),
+                        preset: "libx265".to_string(),
                         subfolder: Some("h265".to_string()),
                         input_extensions: vec![".mp4".into()],
                         output_ext: None, codec: None, quality: None,

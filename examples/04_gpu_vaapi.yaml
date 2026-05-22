@@ -4,74 +4,228 @@
 # Ideal for headless servers, NAS devices, and low-power setups.
 # ─────────────────────────────────────────────────────────────
 
+# Configurações globais do ConvWatcher.
+# Afetam todos os watchers definidos neste arquivo.
 global:
+  # Intervalo de varredura das pastas monitoradas.
+  # Formato: <numero> + sufixo (s=segundos, ms=milissegundos, m=minutos)
+  # Default: 2s
+  # Opcional
   file_check_interval: 2s
+  # Tempo que o arquivo deve ficar estável (sem alterações) antes de converter.
+  # Formato: <numero> + sufixo (s=segundos, ms=milissegundos)
+  # Default: 5s
+  # Opcional
   stable_time: 5s
+  # Caminho absoluto do binário FFmpeg.
+  # Formato: string com caminho completo
+  # Default: /usr/bin/ffmpeg
+  # Obrigatório
   ffmpeg_path: /usr/bin/ffmpeg
+  # Máximo de conversões simultâneas.
+  # Formato: inteiro positivo
+  # Default: 4
+  # Opcional
   max_concurrent: 4
+  # Intervalo para recarregar arquivos de preset (codec_presets).
+  # Formato: <numero> + sufixo (s=segundos, m=minutos)
+  # Default: 5m
+  # Opcional
   refresh_interval: 5m
 
   codec_presets:
+    # Caminho do arquivo de presets de vídeo.
+    # Formato: string (relativo ao diretório config/)
+    # Default: video_codecs.yaml
+    # Obrigatório
     video: video_codecs.yaml
 
   log:
+    # Arquivo de log de erros do FFmpeg.
+    # Formato: caminho absoluto
+    # Default: ./logs/errors.log
+    # Obrigatório
     errors_file: /app/logs/errors.log
+    # Máximo de arquivos de log rotacionados.
+    # Formato: inteiro positivo
+    # Default: 30
+    # Opcional
     max_log_files: 30
+    # Tamanho máximo de cada arquivo de log (MB).
+    # Formato: inteiro positivo (megabytes)
+    # Default: 100
+    # Opcional
     max_log_size_mb: 100
+    # Tamanho máximo do arquivo de log de erros (MB).
+    # Formato: inteiro positivo (megabytes)
+    # Default: 50
+    # Opcional
     max_error_log_size_mb: 50
 
   healthcheck:
+    # Porta do servidor HTTP de healthcheck.
+    # Formato: inteiro (porta TCP)
+    # Default: 8080
+    # Opcional
     http_port: 8080
+    # Endereço de bind do servidor HTTP.
+    # Formato: endereço IP (string)
+    # Default: "0.0.0.0"
+    # Opcional
     bind_address: 0.0.0.0
 
   disk_space:
+    # Intervalo entre verificações de espaço em disco.
+    # Formato: <numero> + sufixo (s=segundos, m=minutos)
+    # Default: 60s
+    # Opcional
     check_interval: 60s
+    # Limite mínimo de espaço livre antes de emitir alerta.
+    # Formato: <numero> (MB), "<numero>GB" ou "<numero>%"
+    # Default: 500
+    # Opcional
     threshold: 500
+    # Verificar espaço na pasta de saída.
+    # Formato: true/false
+    # Default: false
+    # Opcional
     check_output: false
+    # Verificar espaço na pasta monitorada.
+    # Formato: true/false
+    # Default: false
+    # Opcional
     check_watch: false
 
   history:
+    # Persistir histórico de conversões em disco.
+    # Formato: true/false
+    # Default: false
+    # Opcional
     persistent: false
+    # Caminho do arquivo de histórico (JSON).
+    # Formato: caminho absoluto
+    # Default: ./logs/history.json
+    # Opcional (obrigatório se persistent: true)
     file: /app/logs/history.json
+    # Máximo de registros mantidos no histórico.
+    # Formato: inteiro positivo
+    # Default: 500
+    # Opcional
     max_records: 500
 
 # Docker compose.yml must include:
 #   devices:
 #     - /dev/dri:/dev/dri
 
+# Lista de watchers. Cada watcher monitora uma pasta e aplica regras.
 watchers:
+  # Nome único do watcher (usado em logs e dashboard).
+  # Formato: string alfanumérica com hífens
+  # Obrigatório
   - name: vaapi-h264
+    # Caminho absoluto da pasta monitorada.
+    # Arquivos colocados aqui são convertidos automaticamente.
+    # Obrigatório
     watch_folder: /app/inputs/vaapi/
+    # Caminho absoluto da pasta de saída.
+    # Arquivos convertidos são salvos aqui.
+    # Obrigatório
     output_folder: /app/outputs/vaapi-output/
+    # Tipo de conversão.
+    # Valores: video, image, audio, pdf, document, custom
+    # Obrigatório
     type: video
+    # Regras de conversão avaliadas em ordem sequencial.
+    # A primeira regra compatível com o arquivo é aplicada.
     rules:
-      # H.264 via VAAPI — Intel/AMD GPU
+      # ── H.264 via VAAPI — Intel/AMD GPU ──
       - input_extensions: [.mp4, .avi, .mkv, .mov, .mxf, .mts]
+        # Obrigatório: Nome do preset definido em video_codecs.yaml.
         preset: h264_vaapi
+        # Template do nome do arquivo de saída.
+        # Placeholders: {base}, {codec}, {ext}, {num}
+        # Default: "{base}_{codec}_{num}.{ext}"
+        # Opcional
         output_name: "{base}_{codec}_{num}.{ext}"
+        # Verificar duração do convertido vs. original.
+        # Formato: true/false
+        # Default: true
+        # Opcional
         check_duration: true
+        # Razão mínima aceitável (saída / entrada).
+        # Formato: float entre 0.0 e 1.0
+        # Default: 0.9
+        # Opcional (relevante apenas se check_duration: true)
         min_duration_ratio: 0.9
 
+  # Nome único do watcher (usado em logs e dashboard).
+  # Formato: string alfanumérica com hífens
+  # Obrigatório
   - name: vaapi-h265
+    # Caminho absoluto da pasta monitorada.
+    # Obrigatório
     watch_folder: /app/inputs/vaapi-hevc/
+    # Caminho absoluto da pasta de saída.
+    # Obrigatório
     output_folder: /app/outputs/vaapi-hevc-output/
+    # Tipo de conversão.
+    # Valores: video, image, audio, pdf, document, custom
+    # Obrigatório
     type: video
+    # Regras de conversão avaliadas em ordem.
     rules:
-      # H.265/HEVC via VAAPI — smaller files
+      # ── H.265/HEVC via VAAPI — arquivos menores ──
       - input_extensions: [.mp4, .mkv, .mov, .mxf]
-        preset: h265_vaapi
+        # Obrigatório: Nome do preset em video_codecs.yaml.
+        preset: hevc_vaapi
+        # Template do nome do arquivo de saída.
+        # Placeholders: {base}, {codec}, {ext}, {num}
+        # Default: "{base}_{codec}_{num}.{ext}"
+        # Opcional
         output_name: "{base}_{codec}_{num}.{ext}"
+        # Verificar duração do convertido vs. original.
+        # Formato: true/false
+        # Default: true
+        # Opcional
         check_duration: true
+        # Razão mínima aceitável (saída / entrada).
+        # Formato: float entre 0.0 e 1.0
+        # Default: 0.9
+        # Opcional
         min_duration_ratio: 0.9
 
+  # Nome único do watcher (usado em logs e dashboard).
+  # Formato: string alfanumérica com hífens
+  # Obrigatório
   - name: vaapi-av1
+    # Caminho absoluto da pasta monitorada.
+    # Obrigatório
     watch_folder: /app/inputs/vaapi-av1/
+    # Caminho absoluto da pasta de saída.
+    # Obrigatório
     output_folder: /app/outputs/vaapi-av1-output/
+    # Tipo de conversão.
+    # Valores: video, image, audio, pdf, document, custom
+    # Obrigatório
     type: video
+    # Regras de conversão avaliadas em ordem.
     rules:
-      # AV1 via VAAPI — best compression (Intel Arc / newer)
+      # ── AV1 via VAAPI — melhor compressão (Intel Arc / newer) ──
       - input_extensions: [.mp4, .mkv, .mov, .mxf]
+        # Obrigatório: Nome do preset em video_codecs.yaml.
         preset: av1_vaapi
+        # Template do nome do arquivo de saída.
+        # Placeholders: {base}, {codec}, {ext}, {num}
+        # Default: "{base}_{codec}_{num}.{ext}"
+        # Opcional
         output_name: "{base}_{codec}_{num}.{ext}"
+        # Verificar duração do convertido vs. original.
+        # Formato: true/false
+        # Default: true
+        # Opcional
         check_duration: true
+        # Razão mínima aceitável (saída / entrada).
+        # Formato: float entre 0.0 e 1.0
+        # Default: 0.9
+        # Opcional
         min_duration_ratio: 0.9

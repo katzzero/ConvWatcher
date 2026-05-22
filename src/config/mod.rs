@@ -278,7 +278,7 @@ fn generate_default_config(config_path: &Path) -> Result<(GlobalConfig, Vec<Watc
         watch_type: WatchType::Video {
             rules: vec![
                 watch::VideoRule {
-                    preset: "h264_cpu".to_string(),
+                    preset: "libx264".to_string(),
                     subfolder: None,
                     input_extensions: vec![
                         ".mp4".into(), ".avi".into(), ".mkv".into(), ".mov".into(),
@@ -308,7 +308,7 @@ fn generate_default_config(config_path: &Path) -> Result<(GlobalConfig, Vec<Watc
                     min_duration_ratio: Some(0.9),
                 },
                 watch::VideoRule {
-                    preset: "h265_cpu-high".to_string(),
+                    preset: "libx265_high".to_string(),
                     subfolder: Some("archive".to_string()),
                     input_extensions: vec![".mxf".into(), ".mts".into(), ".mov".into(), ".mkv".into()],
                     output_ext: None,
@@ -324,18 +324,201 @@ fn generate_default_config(config_path: &Path) -> Result<(GlobalConfig, Vec<Watc
         },
     }];
 
-    let default_yaml = serde_yaml::to_string(&serde_yaml::Value::Mapping({
-        let mut map = serde_yaml::Mapping::new();
-        map.insert(
-            serde_yaml::Value::String("global".into()),
-            serde_yaml::to_value(&default_global).unwrap(),
-        );
-        map.insert(
-            serde_yaml::Value::String("watchers".into()),
-            serde_yaml::to_value(&default_watchers).unwrap(),
-        );
-        map
-    }))?;
+    let inputs_str = inputs_base.display();
+    let outputs_str = outputs_base.display();
+    let logs_str = logs_base.display();
+
+    let default_yaml = format!(r#"# ─────────────────────────────────────────────────────────────
+# ConvWatcher — Configuração Padrão
+# Gerada automaticamente na primeira execução.
+# ─────────────────────────────────────────────────────────────
+
+global:
+  # Intervalo de varredura das pastas monitoradas.
+  # O sistema verifica periodicamente se há arquivos novos ou modificados.
+  # Formato: <numero> + sufixo (s=segundos, ms=milissegundos, m=minutos)
+  # Default: 2s
+  file_check_interval: 2s
+
+  # Tempo de estabilidade: quanto tempo após o arquivo parar de
+  # crescer antes de iniciar a conversão.
+  # Previne processar arquivos que ainda estão sendo copiados/uploadados.
+  # Formato: <numero> + sufixo (s, ms)
+  # Default: 5s
+  stable_time: 5s
+
+  # Caminho absoluto do binário FFmpeg.
+  # Usado para conversão de vídeo e áudio.
+  # Obrigatório se o watcher usar tipo video ou audio.
+  # Default: /usr/bin/ffmpeg
+  ffmpeg_path: /usr/bin/ffmpeg
+
+  # Caminho absoluto do binário FFprobe.
+  # Opcional — se omitido, usa o mesmo diretório do ffmpeg_path.
+  # ffprobe_path: /usr/bin/ffprobe
+
+  # Máximo de conversões executando simultaneamente.
+  # Aumentar = mais CPU/RAM. Diminuir = menos contenção de recursos.
+  # Default: 4
+  max_concurrent: 4
+
+  # Intervalo de hot-reload: com que frequência o sistema re-scaneia
+  # os arquivos de configuração em busca de mudanças.
+  # 0 = desabilita hot-reload.
+  # Formato: <numero> + sufixo (s, m)
+  # Default: 5m
+  refresh_interval: 5m
+
+  # Secret para validação de configs embutidas (embedded overrides).
+  # Se vazio, embedded configs são aceitas sem validação de secret.
+  # Default: ""
+  embedded_secret: ""
+
+  # Intervalo de scan para configs embutidas nas pastas monitoradas.
+  # 0 = desabilita scan de embedded configs.
+  # Default: 0
+  embedded_scan_interval: 0
+
+  # Paths para arquivos de codec presets, relativos à pasta config/.
+  codec_presets:
+    video: video_codecs.yaml   # Presets de codecs de vídeo
+    audio: audio_codecs.yaml   # Presets de codecs de áudio
+    image: image_codecs.yaml   # Presets de formatos de imagem
+    pdf: pdf_presets.yaml      # Presets de processamento PDF
+    document: document_presets.yaml  # Presets de conversão de documentos
+
+  log:
+    # Caminho absoluto do arquivo de log de erros.
+    # O diretório é criado automaticamente se não existir.
+    # Default: {logs}/errors.log
+    errors_file: {logs}/errors.log
+
+    # Número máximo de arquivos de log rotacionados a manter.
+    # Default: 30
+    max_log_files: 30
+
+    # Tamanho máximo de cada arquivo de log antes da rotação (MB).
+    # Default: 100
+    max_log_size_mb: 100
+
+    # Tamanho máximo do arquivo de log de erros (MB).
+    # Default: 50
+    max_error_log_size_mb: 50
+
+  healthcheck:
+    # Porta HTTP do painel de saúde.
+    # Acesse em http://<bind_address>:<http_port>/dashboard
+    # Default: 8080
+    http_port: 8080
+
+    # Endereço de bind do servidor HTTP.
+    # Use "127.0.0.1" para acesso local apenas.
+    # Default: "0.0.0.0"
+    bind_address: 0.0.0.0
+
+  disk_space:
+    # Intervalo entre verificações de espaço em disco.
+    # Formato: <numero> + sufixo (s, m)
+    # Default: 60s
+    check_interval: 60s
+
+    # Limiar de espaço livre. Quando o espaço livre cai abaixo
+    # deste valor, as conversões são pausadas até espaço ser liberado.
+    # Pode ser: <numero> (MB), <numero>Gb, ou <numero>% (percentual do total)
+    # Exemplos: 500 (MB), 5Gb, 10%
+    # Default: 500 (MB)
+    threshold: 500
+
+    # Verificar espaço no disco da pasta de saída.
+    # Default: false
+    check_output: false
+
+    # Verificar espaço no disco da pasta de entrada.
+    # Default: false
+    check_watch: false
+
+  history:
+    # Persistir histórico de conversões em disco.
+    # Quando false, o histórico é perdido ao reiniciar.
+    # Default: false
+    persistent: false
+
+    # Caminho do arquivo de histórico (usado apenas se persistent: true).
+    # Default: {logs}/history.json
+    file: {logs}/history.json
+
+    # Número máximo de registros no histórico.
+    # Default: 500
+    max_records: 500
+
+watchers:
+  # Cada watcher monitora uma pasta e converte arquivos de um tipo.
+  # É possível ter múltiplos watchers com tipos diferentes.
+
+  - name: default
+    # Caminho absoluto da pasta a monitorar.
+    # Obrigatório. Deve ser um path absoluto.
+    watch_folder: {inputs}/default/
+
+    # Caminho absoluto onde os arquivos convertidos serão salvos.
+    # Obrigatório. Deve ser um path absoluto.
+    output_folder: {outputs}/default-output/
+
+    # Tipo de conversão: video | image | audio | pdf | document | custom
+    # Determina qual processador manipula os arquivos.
+    # Obrigatório.
+    type: video
+
+    # Subpastas declaradas para roteamento de regras.
+    # Cria diretórios ->{{name}}/ dentro da watch_folder.
+    # Arquivos colocados em ->{{name}}/ são roteados a regras com subfolder: <name>.
+    subfolders:
+      - name: gpu
+        description: "GPU-accelerated encoding"
+      - name: archive
+        description: "High-quality archival"
+
+    # Regras de conversão — arquivos são verificados em ordem.
+    # A primeira regra que match é usada.
+    rules:
+      # Regra raiz: match arquivos colocados diretamente na watch_folder.
+      - input_extensions: [.mp4, .avi, .mkv, .mov, .webm, .flv, .wmv, .mpeg, .mpg, .ts, .mts, .mxf]
+        # Nome do preset (obrigatório). Definido em video_codecs.yaml.
+        # O preset define codec, qualidade, áudio, e extensão de saída.
+        preset: libx264
+        # Template do nome do arquivo de saída.
+        # Placeholders: {{base}}, {{codec}}, {{ext}}, {{num}}
+        # Default: "{{base}}_{{codec}}_{{num}}.{{ext}}"
+        output_name: "{{base}}_{{codec}}_{{num}}.{{ext}}"
+        # Verificar duração do output vs input.
+        # Previne saída corrompida / truncada.
+        # Default: true
+        check_duration: true
+        # Razão mínima aceitável de duração (output/input).
+        # 0.9 = output deve ter pelo menos 90% da duração do input.
+        # Default: 0.9
+        min_duration_ratio: 0.9
+
+      # Regra de subpasta: match arquivos em ->gpu/
+      - subfolder: gpu
+        input_extensions: [.mxf, .mts, .mov]
+        preset: h264_nvenc
+        output_name: "{{base}}_gpu.{{ext}}"
+        check_duration: true
+        min_duration_ratio: 0.9
+
+      # Regra de subpasta: match arquivos em ->archive/
+      - subfolder: archive
+        input_extensions: [.mxf, .mts, .mov, .mkv]
+        preset: libx265_high
+        output_name: "{{base}}_archive.{{ext}}"
+        check_duration: true
+        min_duration_ratio: 0.95
+"#,
+        inputs = inputs_str,
+        outputs = outputs_str,
+        logs = logs_str,
+    );
 
     fs::write(config_path, &default_yaml)
         .with_context(|| format!("Cannot write {}", config_path.display()))?;
@@ -403,57 +586,57 @@ fn generate_preset_files(config_dir: &Path) -> Result<()> {
 
 // Default preset file contents (generated on first run)
 const DEFAULT_VIDEO_PRESETS: &str = r#"# Video codec presets — reference by name in watcher rules.
-# Each preset defines: codec, quality, audio settings, output container.
+# Preset names match the FFmpeg codec name for clarity.
 
 presets:
   # ── CPU Encoding ──
-  h264_cpu:
+  libx264:
     codec: libx264
     quality: crf 23
     audio_codec: aac
     audio_bitrate: 128k
     output_ext: .mp4
-    description: "H.264 CPU — general purpose, wide compatibility"
+    description: "libx264 H.264/AVC — crf 23, aac 128k, .mp4 — general purpose"
 
-  h264_cpu-high:
+  libx264_high:
     codec: libx264
     quality: crf 18
     audio_codec: aac
     audio_bitrate: 192k
     output_ext: .mp4
-    description: "H.264 CPU — high quality, archival"
+    description: "libx264 H.264/AVC — crf 18, aac 192k, .mp4 — high quality archival"
 
-  h265_cpu:
+  libx265:
     codec: libx265
     quality: crf 28
     audio_codec: aac
     audio_bitrate: 128k
     output_ext: .mp4
-    description: "H.265/HEVC CPU — smaller files, slower"
+    description: "libx265 H.265/HEVC — crf 28, aac 128k, .mp4 — smaller files, slower"
 
-  h265_cpu-high:
+  libx265_high:
     codec: libx265
     quality: crf 22
     audio_codec: aac
     audio_bitrate: 192k
     output_ext: .mkv
-    description: "H.265/HEVC CPU — high quality archival"
+    description: "libx265 H.265/HEVC — crf 22, aac 192k, .mkv — high quality archival"
 
-  vp9_cpu:
+  libvpx-vp9:
     codec: libvpx-vp9
     quality: crf 30
     audio_codec: libopus
     audio_bitrate: 128k
     output_ext: .webm
-    description: "VP9 CPU — web streaming"
+    description: "libvpx-vp9 VP9 — crf 30, libopus 128k, .webm — web streaming"
 
-  av1_cpu:
+  libaom-av1:
     codec: libaom-av1
     quality: crf 30
     audio_codec: libopus
     audio_bitrate: 128k
     output_ext: .mp4
-    description: "AV1 CPU — best compression, very slow"
+    description: "libaom-av1 AV1 — crf 30, libopus 128k, .mp4 — best compression, very slow"
 
   # ── VAAPI (Intel / AMD integrated GPU) ──
   h264_vaapi:
@@ -461,28 +644,28 @@ presets:
     quality: qp 25
     audio_codec: copy
     output_ext: .mp4
-    description: "H.264 VAAPI — Intel/AMD GPU hardware encoding"
+    description: "h264_vaapi H.264/AVC — qp 25, copy audio, .mp4 — Intel/AMD GPU"
 
-  h265_vaapi:
+  hevc_vaapi:
     codec: hevc_vaapi
     quality: qp 28
     audio_codec: copy
     output_ext: .mkv
-    description: "H.265 VAAPI — Intel/AMD GPU, smaller files"
+    description: "hevc_vaapi H.265/HEVC — qp 28, copy audio, .mkv — Intel/AMD GPU"
 
   vp9_vaapi:
     codec: vp9_vaapi
     quality: qp 28
     audio_codec: copy
     output_ext: .webm
-    description: "VP9 VAAPI — web streaming via GPU"
+    description: "vp9_vaapi VP9 — qp 28, copy audio, .webm — web streaming via GPU"
 
   av1_vaapi:
     codec: av1_vaapi
     quality: qp 30
     audio_codec: copy
     output_ext: .mp4
-    description: "AV1 VAAPI — best compression via GPU (Arc / newer Intel)"
+    description: "av1_vaapi AV1 — qp 30, copy audio, .mp4 — best compression via GPU (Arc / newer Intel)"
 
   # ── NVENC (NVIDIA GPU) ──
   h264_nvenc:
@@ -490,35 +673,35 @@ presets:
     quality: cq 23
     audio_codec: copy
     output_ext: .mp4
-    description: "H.264 NVENC — NVIDIA GPU, fast"
+    description: "h264_nvenc H.264/AVC — cq 23, copy audio, .mp4 — NVIDIA GPU fast"
 
-  h264_nvenc-high:
+  h264_nvenc_high:
     codec: h264_nvenc
     quality: cq 18
     audio_codec: copy
     output_ext: .mp4
-    description: "H.264 NVENC — NVIDIA GPU, high quality"
+    description: "h264_nvenc H.264/AVC — cq 18, copy audio, .mp4 — NVIDIA GPU high quality"
 
-  h265_nvenc:
+  hevc_nvenc:
     codec: hevc_nvenc
     quality: cq 28
     audio_codec: copy
     output_ext: .mkv
-    description: "H.265 NVENC — NVIDIA GPU, smaller files"
+    description: "hevc_nvenc H.265/HEVC — cq 28, copy audio, .mkv — NVIDIA GPU"
 
-  h265_nvenc-high:
+  hevc_nvenc_high:
     codec: hevc_nvenc
     quality: cq 22
     audio_codec: copy
     output_ext: .mkv
-    description: "H.265 NVENC — NVIDIA GPU, high quality"
+    description: "hevc_nvenc H.265/HEVC — cq 22, copy audio, .mkv — NVIDIA GPU high quality"
 
   av1_nvenc:
     codec: av1_nvenc
     quality: cq 28
     audio_codec: copy
     output_ext: .mp4
-    description: "AV1 NVENC — NVIDIA GPU (RTX 40-series+)"
+    description: "av1_nvenc AV1 — cq 28, copy audio, .mp4 — NVIDIA GPU (RTX 40-series+)"
 
   # ── AMF (AMD GPU) ──
   h264_amf:
@@ -526,21 +709,21 @@ presets:
     quality: qp_i 25
     audio_codec: copy
     output_ext: .mp4
-    description: "H.264 AMF — AMD GPU hardware encoding"
+    description: "h264_amf H.264/AVC — qp_i 25, copy audio, .mp4 — AMD GPU"
 
-  h265_amf:
+  hevc_amf:
     codec: hevc_amf
     quality: qp_i 28
     audio_codec: copy
     output_ext: .mkv
-    description: "H.265 AMF — AMD GPU, smaller files"
+    description: "hevc_amf H.265/HEVC — qp_i 28, copy audio, .mkv — AMD GPU"
 
   av1_amf:
     codec: av1_amf
     quality: qp_i 28
     audio_codec: copy
     output_ext: .mp4
-    description: "AV1 AMF — AMD GPU (RX 7000+)"
+    description: "av1_amf AV1 — qp_i 28, copy audio, .mp4 — AMD GPU (RX 7000+)"
 
   # ── QSV (Intel QuickSync via MediaSDK) ──
   h264_qsv:
@@ -548,28 +731,28 @@ presets:
     quality: qp 25
     audio_codec: copy
     output_ext: .mp4
-    description: "H.264 QuickSync — Intel GPU via MediaSDK"
+    description: "h264_qsv H.264/AVC — qp 25, copy audio, .mp4 — Intel QuickSync"
 
-  h265_qsv:
+  hevc_qsv:
     codec: hevc_qsv
     quality: qp 28
     audio_codec: copy
     output_ext: .mkv
-    description: "H.265 QuickSync — Intel GPU via MediaSDK"
+    description: "hevc_qsv H.265/HEVC — qp 28, copy audio, .mkv — Intel QuickSync"
 
   vp9_qsv:
     codec: vp9_qsv
     quality: qp 28
     audio_codec: copy
     output_ext: .webm
-    description: "VP9 QuickSync — Intel GPU"
+    description: "vp9_qsv VP9 — qp 28, copy audio, .webm — Intel QuickSync"
 
   av1_qsv:
     codec: av1_qsv
     quality: qp 30
     audio_codec: copy
     output_ext: .mp4
-    description: "AV1 QuickSync — Intel GPU (Arc / 12th gen+)"
+    description: "av1_qsv AV1 — qp 30, copy audio, .mp4 — Intel QuickSync (Arc / 12th gen+)"
 
   # ── VideoToolbox (macOS) ──
   h264_videotoolbox:
@@ -577,14 +760,14 @@ presets:
     quality: constant_bit_rate 3000
     audio_codec: copy
     output_ext: .mp4
-    description: "H.264 VideoToolbox — macOS hardware encoding"
+    description: "h264_videotoolbox H.264/AVC — b:v 3000, copy audio, .mp4 — macOS VideoToolbox"
 
-  h265_videotoolbox:
+  hevc_videotoolbox:
     codec: hevc_videotoolbox
     quality: constant_bit_rate 5000
     audio_codec: copy
     output_ext: .mp4
-    description: "H.265 VideoToolbox — macOS hardware encoding"
+    description: "hevc_videotoolbox H.265/HEVC — b:v 5000, copy audio, .mp4 — macOS VideoToolbox"
 
   # ── OMX (Raspberry Pi) ──
   h264_omx:
@@ -592,7 +775,7 @@ presets:
     quality: qp 25
     audio_codec: copy
     output_ext: .mp4
-    description: "H.264 OMX — Raspberry Pi hardware encoding"
+    description: "h264_omx H.264/AVC — qp 25, copy audio, .mp4 — Raspberry Pi OMX"
 
   # ── Legacy ──
   mpeg4:
@@ -601,29 +784,29 @@ presets:
     audio_codec: aac
     audio_bitrate: 128k
     output_ext: .avi
-    description: "MPEG-4 Part 2 — legacy compatibility"
+    description: "mpeg4 MPEG-4 Part 2 — qscale 4, aac 128k, .avi — legacy compatibility"
 
-  mpeg2:
+  mpeg2video:
     codec: mpeg2video
     quality: qscale 4
     audio_codec: mp2
     audio_bitrate: 192k
     output_ext: .mpg
-    description: "MPEG-2 — DVD / broadcast"
+    description: "mpeg2video MPEG-2 — qscale 4, mp2 192k, .mpg — DVD / broadcast"
 
   # ── Pass-through ──
-  copy_video:
+  copy:
     codec: copy
     audio_codec: copy
     output_ext: .mp4
-    description: "Stream copy — no re-encoding, remux only"
+    description: "copy — stream copy all streams, no re-encoding, remux only, .mp4"
 
-  copy_video_aac:
+  copy_aac:
     codec: copy
     audio_codec: aac
     audio_bitrate: 128k
     output_ext: .mp4
-    description: "Copy video, re-encode audio to AAC"
+    description: "copy_aac — copy video stream, re-encode audio to aac 128k, .mp4"
 "#;
 
 const DEFAULT_AUDIO_PRESETS: &str = r#"# Audio codec presets — reference by name in watcher rules.
@@ -1030,7 +1213,7 @@ mod tests {
             output_folder: "/app/outputs/test/".to_string(),
             watch_type: WatchType::Video {
                 rules: vec![watch::VideoRule {
-                    preset: "h264_cpu".to_string(),
+                    preset: "libx264".to_string(),
                     subfolder: None,
                     input_extensions: vec![],
                     output_ext: None,
@@ -1060,7 +1243,7 @@ mod tests {
             output_folder: "/app/outputs/test/".to_string(),
             watch_type: WatchType::Video {
                 rules: vec![watch::VideoRule {
-                    preset: "h264_cpu".to_string(),
+                    preset: "libx264".to_string(),
                     subfolder: None,
                     input_extensions: vec![".mp4".into(), ".mxf".into()],
                     output_ext: None,
@@ -1089,7 +1272,7 @@ mod tests {
                 subfolders: Vec::new(),
                 watch_type: WatchType::Video {
                     rules: vec![watch::VideoRule {
-                        preset: "h264_cpu".to_string(),
+                        preset: "libx264".to_string(),
                         subfolder: None,
                         input_extensions: vec![".mp4".into()],
                         output_ext: None, codec: None, quality: None,

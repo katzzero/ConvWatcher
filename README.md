@@ -136,7 +136,7 @@ watchers:
         description: "HEVC archival"
     rules:
       - input_extensions: [.mp4, .avi, .mkv, .mov, .mxf]
-        preset: h264_cpu
+        preset: libx264
         output_name: "{base}_{codec}_{num}.{ext}"
         check_duration: true
         min_duration_ratio: 0.9
@@ -147,7 +147,7 @@ watchers:
 
       - subfolder: archive
         input_extensions: [.mxf, .mts, .mkv]
-        preset: h265_cpu-high
+        preset: libx265_high
 ```
 
 ### Key Changes from v0.8
@@ -160,6 +160,66 @@ watchers:
 | Relative paths allowed | **Absolute paths required** |
 | Codec settings in rules | Codec presets in separate YAML files |
 
+### Config Reference
+
+#### Global Config Reference
+
+| Campo | Tipo | Obrigatório | Default | Descrição |
+|-------|------|-------------|---------|-----------|
+| `file_check_interval` | string (duração) | não | `2s` | Intervalo de varredura das pastas |
+| `stable_time` | string (duração) | não | `5s` | Tempo de estabilidade após upload |
+| `ffmpeg_path` | string (path) | não | `/usr/bin/ffmpeg` | Caminho do FFmpeg |
+| `ffprobe_path` | string (path) | não | — | Caminho do FFprobe (auto-detecta se omitido) |
+| `max_concurrent_conversions` | integer | não | `4` | Máx. conversões simultâneas |
+| `config_refresh_interval_s` | string (duração) | não | `5m` | Intervalo de hot-reload |
+| `embedded_secret` | string | não | `""` | Secret para validação de overrides |
+| `embedded_scan_interval_s` | integer | não | `0` | Intervalo de scan de overrides |
+| `codec_presets.*` | string (path) | não | `video_codecs.yaml` etc | Arquivos de presets |
+| `log.errors_file` | string (path) | não | `<CWD>/logs/errors.log` | Path do log de erros |
+| `log.max_log_files` | integer | não | `30` | Máx. arquivos de log rotacionados |
+| `log.max_log_size_mb` | integer | não | `100` | Tamanho máx. por arquivo de log (MB) |
+| `healthcheck.http_port` | integer | não | `8080` | Porta do dashboard |
+| `healthcheck.bind_address` | string | não | `0.0.0.0` | Endereço de bind |
+| `disk_space.check_interval` | string (duração) | não | `60s` | Intervalo de verificação de disco |
+| `disk_space.threshold` | string/int | não | `500` | Limiar de espaço livre (MB, Gb, %) |
+| `disk_space.check_output` | boolean | não | `false` | Verificar disco da pasta de saída |
+| `disk_space.check_watch` | boolean | não | `false` | Verificar disco da pasta de entrada |
+| `history.persistent` | boolean | não | `false` | Persistir histórico em disco |
+| `history.file` | string (path) | não | `<CWD>/logs/history.json` | Path do histórico |
+| `history.max_records` | integer | não | `500` | Máx. registros no histórico |
+
+#### Watcher Config Reference
+
+| Campo | Tipo | Obrigatório | Descrição |
+|-------|------|-------------|-----------|
+| `name` | string | sim | Rótulo do watcher (exibido no dashboard) |
+| `watch_folder` | string (path) | sim | Pasta a monitorar (deve ser absoluto) |
+| `output_folder` | string (path) | sim | Pasta de saída (deve ser absoluto) |
+| `type` | enum | sim | `video`, `image`, `audio`, `pdf`, `document`, `custom` |
+| `subfolders[].name` | string | não | Nome da subpasta (cria `->{name}/`) |
+| `subfolders[].description` | string | não | Descrição da subpasta |
+
+#### Rule Config Reference
+
+| Campo | Tipo | Obrigatório | Default | Descrição |
+|-------|------|-------------|---------|-----------|
+| `preset` | string | **sim** | — | Nome do preset no arquivo de codecs |
+| `input_extensions` | string[] | sim | — | Extensões de arquivo a processar |
+| `subfolder` | string | não | — | Subpasta alvo (omitir = pasta raiz) |
+| `output_ext` | string | não | (do preset) | Sobrescrever extensão de saída |
+| `output_name` | string | não | `{base}_{codec}_{num}.{ext}` | Template do nome de saída |
+| `check_duration` | bool | não | `true` | Verificar duração output vs input (vídeo) |
+| `min_duration_ratio` | float | não | `0.9` | Razão mínima de duração aceitável (vídeo) |
+
+**Override fields (opcionais, sobrescrevem o preset):**
+
+**Video:** `codec`, `quality`, `audio_codec`, `audio_bitrate`  
+**Image:** `quality`, `transparent`  
+**Audio:** `audio_codec`, `audio_bitrate`, `sample_rate`, `channels`  
+**PDF:** `mode`, `quality`, `pdfa_version`, `resolution`, `password`  
+**Document:** `toc`, `toc_depth`, `css`, `template`, `standalone`, `pdf_engine`, `metadata`  
+**Custom:** `command`, `description`
+
 ### Codec Presets
 
 Presets are defined in separate YAML files under `config/`. Rules reference them by name:
@@ -167,13 +227,21 @@ Presets are defined in separate YAML files under `config/`. Rules reference them
 ```yaml
 # config/video_codecs.yaml
 presets:
-  h264_cpu:
+  libx264:
     codec: libx264
     quality: crf 23
     audio_codec: aac
     audio_bitrate: 128k
     output_ext: .mp4
     description: "H.264 CPU — general purpose"
+
+  libx264_high:
+    codec: libx264
+    quality: crf 18
+    audio_codec: aac
+    audio_bitrate: 192k
+    output_ext: .mp4
+    description: "H.264 CPU — high quality"
 
   h264_nvenc:
     codec: h264_nvenc
@@ -195,11 +263,11 @@ Every rule **must** specify a `preset`. Optional fields override the preset:
 rules:
   # Minimal — just reference a preset
   - input_extensions: [.mp4, .avi]
-    preset: h264_cpu
+    preset: libx264
 
   # Override specific settings
   - input_extensions: [.mxf]
-    preset: h264_cpu
+    preset: libx264
     quality: "crf 18"           # Override preset quality
     audio_codec: copy           # Pass through audio
 ```
@@ -221,7 +289,7 @@ watchers:
         description: "High-quality archival"
     rules:
       - input_extensions: [.mp4, .avi, .mkv]
-        preset: h264_cpu                    # Root folder files
+        preset: libx264                     # Root folder files
 
       - subfolder: gpu
         input_extensions: [.mxf, .mov]
@@ -229,17 +297,17 @@ watchers:
 
       - subfolder: archive
         input_extensions: [.mxf, .mkv]
-        preset: h265_cpu-high               # ->archive/ files
+        preset: libx265_high                # ->archive/ files
 ```
 
 Directory structure:
 ```
 ./inputs/videos/
-├── video.mp4          → matches root rule → h264_cpu
+├── video.mp4          → matches root rule → libx264
 ├── ->gpu/
 │   └── broadcast.mxf  → matches gpu rule → h264_nvenc
 └── ->archive/
-    └── master.mxf     → matches archive rule → h265_cpu-high
+    └── master.mxf     → matches archive rule → libx265_high
 ```
 
 ### Absolute Paths
@@ -280,7 +348,7 @@ output_folder: /app/outputs/special/
 type: video
 rules:
   - input_extensions: [.mp4]
-    preset: h265_cpu-high
+    preset: libx265_high
     quality: "crf 18"
 ```
 

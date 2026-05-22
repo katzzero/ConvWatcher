@@ -5,13 +5,47 @@
 # ─────────────────────────────────────────────────────────────
 
 global:
+  # Intervalo de varredura das pastas monitoradas.
+  # O sistema verifica periodicamente se há arquivos novos ou modificados.
+  # Formato: <numero> + sufixo (s=segundos, ms=milissegundos, m=minutos)
+  # Default: 2s
+  # Opcional
   file_check_interval: 2s
+
+  # Tempo de estabilidade: quanto tempo após o arquivo parar de crescer
+  # antes de iniciar a conversão. Previne processar arquivos que ainda
+  # estão sendo copiados/uploadados.
+  # Formato: <numero> + sufixo (s, ms)
+  # Default: 5s
+  # Opcional
   stable_time: 5s
+
+  # Caminho absoluto do binário FFmpeg. Usado para conversão de vídeo e áudio.
+  # Formato: string (caminho absoluto)
+  # Default: /usr/bin/ffmpeg
+  # Opcional
   ffmpeg_path: /usr/bin/ffmpeg
+
+  # Número máximo de conversões executadas simultaneamente.
+  # Útil para limitar uso de CPU/GPU.
+  # Formato: inteiro >= 1
+  # Default: 4
+  # Opcional
   max_concurrent: 4
+
+  # Intervalo para recarregar arquivos de preset em disco.
+  # Permite alterar codecs sem reiniciar o serviço.
+  # Formato: <numero> + sufixo (s, m)
+  # Default: 5m
+  # Opcional
   refresh_interval: 5m
 
   codec_presets:
+    # Mapa de arquivos de preset por tipo de mídia.
+    # Cada tipo referencia um arquivo YAML separado com as definições
+    # de codecs, qualidades e extensões de saída.
+    # Formato: <tipo>: <caminho_arquivo>
+    # Obrigatório (pelo menos um tipo, conforme os watchers usados)
     video: video_codecs.yaml
     audio: audio_codecs.yaml
     image: image_codecs.yaml
@@ -19,123 +53,397 @@ global:
     document: document_presets.yaml
 
   log:
+    # Arquivo onde logs de erro são escritos.
+    # Formato: string (caminho absoluto)
+    # Default: logs/errors.log (relativo ao diretório do app)
+    # Opcional
     errors_file: /app/logs/errors.log
+
+    # Número máximo de arquivos de log rotacionados mantidos.
+    # Formato: inteiro >= 1
+    # Default: 30
+    # Opcional
     max_log_files: 30
+
+    # Tamanho máximo de cada arquivo de log antes da rotação (em MB).
+    # Formato: inteiro >= 1
+    # Default: 100
+    # Opcional
     max_log_size_mb: 100
+
+    # Tamanho máximo do arquivo de log de erros antes da rotação (em MB).
+    # Formato: inteiro >= 1
+    # Default: 50
+    # Opcional
     max_error_log_size_mb: 50
 
   healthcheck:
+    # Porta HTTP para o endpoint de healthcheck.
+    # Usado por orquestradores (Docker/K8s) para monitorar o serviço.
+    # Formato: inteiro (porta TCP válida)
+    # Default: 8080
+    # Opcional
     http_port: 8080
+
+    # Endereço IP ao qual o servidor HTTP do healthcheck se liga.
+    # Use 0.0.0.0 para aceitar conexões de qualquer interface.
+    # Formato: string (endereço IPv4)
+    # Default: "0.0.0.0"
+    # Opcional
     bind_address: 0.0.0.0
 
   disk_space:
+    # Intervalo entre verificações de espaço em disco disponível.
+    # Formato: <numero> + sufixo (s, m)
+    # Default: 60s
+    # Opcional
     check_interval: 60s
+
+    # Limite mínimo de espaço livre em disco (em MB) antes de parar
+    # novas conversões.
+    # Formato: inteiro >= 0 (MB)
+    # Default: 500
+    # Opcional
     threshold: 500
+
+    # Se true, verifica espaço no disco da pasta de saída.
+    # Formato: booleano (true/false)
+    # Default: false
+    # Opcional
     check_output: true
+
+    # Se true, verifica espaço no disco das pastas monitoradas.
+    # Formato: booleano (true/false)
+    # Default: false
+    # Opcional
     check_watch: true
 
   history:
+    # Se true, mantém histórico persistente de conversões entre
+    # reinicializações do serviço.
+    # Formato: booleano (true/false)
+    # Default: false
+    # Opcional
     persistent: true
+
+    # Caminho do arquivo de histórico em disco (usado se persistent: true).
+    # Formato: string (caminho absoluto)
+    # Default: logs/history.json
+    # Opcional
     file: /app/logs/history.json
+
+    # Número máximo de registros mantidos no histórico.
+    # Registros mais antigos são removidos quando o limite é excedido.
+    # Formato: inteiro >= 1
+    # Default: 500
+    # Opcional
     max_records: 1000
 
 # ── Video: CPU default + GPU subfolder + Archive subfolder ──
 watchers:
+  # ── Lista de watchers ──
+  # Cada entrada monitora uma pasta e aplica regras de conversão
+  # baseadas no tipo de mídia. Múltiplos watchers rodam em paralelo.
   - name: videos
+    # Nome único do watcher. Usado em logs e identificação interna.
+    # Formato: string (sem espaços ou caracteres especiais)
+    # Obrigatório
     watch_folder: /app/inputs/videos/
+    # Caminho absoluto da pasta a ser monitorada.
+    # Arquivos adicionados/modificados aqui disparam conversão.
+    # Formato: string (caminho absoluto)
+    # Obrigatório
     output_folder: /app/outputs/videos-output/
+    # Caminho absoluto da pasta onde os arquivos convertidos são salvos.
+    # Formato: string (caminho absoluto)
+    # Obrigatório
     type: video
+    # Tipo de mídia processada. Determina qual conjunto de presets
+    # será usado.
+    # Valores aceitos: video, image, audio, pdf, document, custom
+    # Obrigatório
     subfolders:
+      # Lista de subpastas especiais que podem ser alvo de regras
+      # específicas via campo "subfolder:" na regra.
+      # Cada entrada define um nome e uma descrição opcional.
+      # Opcional
       - name: gpu
+        # Nome da subpasta (usado no campo "subfolder" das regras).
+        # Formato: string
         description: "NVIDIA GPU encoding via NVENC"
+        # Descrição opcional da finalidade da subpasta.
+        # Formato: string
+        # Opcional
       - name: archive
         description: "High-quality HEVC archival"
     rules:
+      # ── Regras de conversão ──
+      # Avaliadas em ordem: a primeira regra cujas extensões
+      # correspondem ao arquivo de entrada é aplicada.
+      # Se a regra tem "subfolder:", o arquivo convertido é salvo
+      # na subpasta correspondente dentro de output_folder.
+
       # Root folder — standard CPU encoding
       - input_extensions: [.mp4, .avi, .mkv, .mov, .mxf, .mts, .webm, .flv]
-        preset: h264_cpu
+        # Extensões de arquivo que disparam esta regra.
+        # Formato: lista de strings com ponto inicial
+        # Obrigatório (a menos que subfolder seja usado)
+        # Obrigatório: Nome do preset definido no arquivo de presets.
+        # Define codec, qualidade, áudio, e extensão de saída.
+        preset: libx264
+        # Template do nome do arquivo de saída.
+        # Placeholders: {base}, {codec}, {num}, {ext}
+        # Default: "{base}_{codec}_{num}.{ext}"
+        # Opcional
         output_name: "{base}_{codec}_{num}.{ext}"
+        # Verificar duração do output vs input para prevenir
+        # saída corrompida.
+        # Formato: booleano (true/false)
+        # Default: true
+        # Opcional
         check_duration: true
+        # Razão mínima aceitável de duração (output/input).
+        # 0.9 = output deve ter pelo menos 90% da duração do input.
+        # Formato: decimal entre 0.0 e 1.0
+        # Default: 0.9
+        # Opcional
         min_duration_ratio: 0.9
 
       # ->gpu/ subfolder — NVIDIA GPU encoding
       - subfolder: gpu
+        # Nome da subpasta alvo (deve existir em subfolders:).
+        # Quando definido, o arquivo convertido é salvo em
+        # output_folder/<subfolder>/.
+        # Formato: string
+        # Opcional (se ausente, salva na raiz da output_folder)
         input_extensions: [.mxf, .mts, .mov, .mp4]
+        # Nome do preset (definido no arquivo de presets de vídeo).
+        # Define codec, qualidade, áudio, e extensão de saída.
         preset: h264_nvenc
+        # Template do nome do arquivo de saída.
+        # Placeholders: {base}, {codec}, {num}, {ext}
+        # Default: "{base}_{codec}_{num}.{ext}"
+        # Opcional
         output_name: "{base}_gpu_{num}.{ext}"
 
       # ->archive/ subfolder — high-quality HEVC for archival
       - subfolder: archive
+        # Extensões de arquivo que disparam esta regra.
+        # Formato: lista de strings com ponto inicial
+        # Obrigatório (a menos que subfolder seja usado)
         input_extensions: [.mxf, .mts, .mov, .mkv]
-        preset: h265_cpu-high
+        # Nome do preset (definido no arquivo de presets de vídeo).
+        # Define codec, qualidade, áudio, e extensão de saída.
+        preset: libx265_high
+        # Template do nome do arquivo de saída.
+        # Placeholders: {base}, {codec}, {num}, {ext}
+        # Default: "{base}_{codec}_{num}.{ext}"
+        # Opcional
         output_name: "{base}_archive_{num}.{ext}"
 
   # ── Image: Convert TIFF/BMP/HEIC to JPEG ──
   - name: images
+    # Nome único do watcher. Usado em logs e identificação interna.
+    # Formato: string
+    # Obrigatório
     watch_folder: /app/inputs/images/
+    # Caminho absoluto da pasta monitorada.
+    # Formato: string (caminho absoluto)
+    # Obrigatório
     output_folder: /app/outputs/images-output/
+    # Caminho absoluto da pasta de saída.
+    # Formato: string (caminho absoluto)
+    # Obrigatório
     type: image
+    # Tipo de mídia. Valores aceitos: video, image, audio, pdf, document, custom
+    # Obrigatório
     subfolders:
       - name: web
+        # Nome da subpasta alvo para regras com subfolder: web
+        # Formato: string
         description: "WebP for web delivery"
+        # Descrição opcional.
+        # Opcional
     rules:
       - input_extensions: [.tiff, .tif, .bmp, .heic]
+        # Extensões que disparam esta regra.
+        # Formato: lista de strings com ponto inicial
+        # Obrigatório
+        # Nome do preset (definido no arquivo de presets de imagem).
+        # Define codec, qualidade e extensão de saída.
         preset: jpeg_80
+        # Template do nome do arquivo de saída.
+        # Placeholders: {base}, {ext}
+        # Default: "{base}_{codec}_{num}.{ext}"
+        # Opcional
         output_name: "{base}.{ext}"
 
       - subfolder: web
+        # Salva o resultado na subpasta "web" dentro de output_folder.
+        # Formato: string
+        # Opcional
         input_extensions: [.tiff, .png, .bmp]
+        # Nome do preset (definido no arquivo de presets de imagem).
+        # Define codec, qualidade e extensão de saída.
         preset: webp_80
+        # Template do nome do arquivo de saída.
+        # Placeholders: {base}, {ext}
+        # Default: "{base}_{codec}_{num}.{ext}"
+        # Opcional
         output_name: "{base}_web.{ext}"
 
   # ── Audio: Convert to MP3 ──
   - name: audio
+    # Nome único do watcher.
+    # Formato: string
+    # Obrigatório
     watch_folder: /app/inputs/audio/
+    # Caminho absoluto da pasta monitorada.
+    # Formato: string (caminho absoluto)
+    # Obrigatório
     output_folder: /app/outputs/audio-output/
+    # Caminho absoluto da pasta de saída.
+    # Formato: string (caminho absoluto)
+    # Obrigatório
     type: audio
+    # Tipo de mídia. Valores aceitos: video, image, audio, pdf, document, custom
+    # Obrigatório
     subfolders:
       - name: lossless
+        # Nome da subpasta alvo para regras com subfolder: lossless
+        # Formato: string
         description: "FLAC for archival"
+        # Descrição opcional.
+        # Opcional
     rules:
       - input_extensions: [.wav, .flac, .aac, .ogg, .wma]
+        # Extensões que disparam esta regra.
+        # Formato: lista de strings com ponto inicial
+        # Obrigatório
+        # Nome do preset (definido no arquivo de presets de áudio).
+        # Define codec, qualidade e extensão de saída.
         preset: mp3_320
+        # Template do nome do arquivo de saída.
+        # Placeholders: {base}, {ext}
+        # Default: "{base}_{codec}_{num}.{ext}"
+        # Opcional
         output_name: "{base}.{ext}"
 
       - subfolder: lossless
+        # Salva o resultado na subpasta "lossless" dentro de output_folder.
+        # Formato: string
+        # Opcional
         input_extensions: [.wav, .aiff, .alac]
+        # Nome do preset (definido no arquivo de presets de áudio).
+        # Define codec, qualidade e extensão de saída.
         preset: flac
+        # Template do nome do arquivo de saída.
+        # Placeholders: {base}, {ext}
+        # Default: "{base}_{codec}_{num}.{ext}"
+        # Opcional
         output_name: "{base}_lossless.{ext}"
 
   # ── PDF: Compress incoming PDFs ──
   - name: pdfs
+    # Nome único do watcher.
+    # Formato: string
+    # Obrigatório
     watch_folder: /app/inputs/pdfs/
+    # Caminho absoluto da pasta monitorada.
+    # Formato: string (caminho absoluto)
+    # Obrigatório
     output_folder: /app/outputs/pdfs-output/
+    # Caminho absoluto da pasta de saída.
+    # Formato: string (caminho absoluto)
+    # Obrigatório
     type: pdf
+    # Tipo de mídia. Valores aceitos: video, image, audio, pdf, document, custom
+    # Obrigatório
     rules:
       - input_extensions: [.pdf]
+        # Extensões que disparam esta regra.
+        # Formato: lista de strings com ponto inicial
+        # Obrigatório
+        # Nome do preset (definido no arquivo de presets de PDF).
+        # Define nível de compressão e extensão de saída.
         preset: pdf_ebook
+        # Template do nome do arquivo de saída.
+        # Placeholders: {base}, {ext}
+        # Default: "{base}_{codec}_{num}.{ext}"
+        # Opcional
         output_name: "{base}_compressed.{ext}"
 
   # ── Documents: Convert to PDF ──
   - name: documents
+    # Nome único do watcher.
+    # Formato: string
+    # Obrigatório
     watch_folder: /app/inputs/documents/
+    # Caminho absoluto da pasta monitorada.
+    # Formato: string (caminho absoluto)
+    # Obrigatório
     output_folder: /app/outputs/documents-output/
+    # Caminho absoluto da pasta de saída.
+    # Formato: string (caminho absoluto)
+    # Obrigatório
     type: document
+    # Tipo de mídia. Valores aceitos: video, image, audio, pdf, document, custom
+    # Obrigatório
     rules:
       - input_extensions: [.docx, .doc, .odt, .rtf]
+        # Extensões que disparam esta regra.
+        # Formato: lista de strings com ponto inicial
+        # Obrigatório
+        # Nome do preset (definido no arquivo de presets de documento).
+        # Define formato de saída e configurações de conversão.
         preset: docx_to_pdf
+        # Template do nome do arquivo de saída.
+        # Placeholders: {base}, {ext}
+        # Default: "{base}_{codec}_{num}.{ext}"
+        # Opcional
         output_name: "{base}.{ext}"
 
       - input_extensions: [.md]
+        # Extensões que disparam esta regra.
+        # Formato: lista de strings com ponto inicial
+        # Obrigatório
+        # Nome do preset (definido no arquivo de presets de documento).
+        # Define formato de saída e configurações de conversão.
         preset: md_to_pdf
+        # Template do nome do arquivo de saída.
+        # Placeholders: {base}, {ext}
+        # Default: "{base}_{codec}_{num}.{ext}"
+        # Opcional
         output_name: "{base}.{ext}"
 
   # ── Custom: HandBrake batch processing ──
   - name: handbrake
+    # Nome único do watcher.
+    # Formato: string
+    # Obrigatório
     watch_folder: /app/inputs/handbrake/
+    # Caminho absoluto da pasta monitorada.
+    # Formato: string (caminho absoluto)
+    # Obrigatório
     output_folder: /app/outputs/handbrake-output/
+    # Caminho absoluto da pasta de saída.
+    # Formato: string (caminho absoluto)
+    # Obrigatório
     type: custom
+    # Tipo customizado: permite executar ferramentas externas
+    # (HandBrake, ImageMagick, scripts shell, etc.) definidas no preset.
+    # Valores aceitos: video, image, audio, pdf, document, custom
+    # Obrigatório
     rules:
       - input_extensions: [.mkv, .avi, .mxf]
+        # Extensões que disparam esta regra.
+        # Formato: lista de strings com ponto inicial
+        # Obrigatório
+        # Nome do preset custom (definido no arquivo de presets).
+        # Define comando externo, argumentos e extensão de saída.
         preset: handbrake
+        # Template do nome do arquivo de saída.
+        # Placeholders: {base}, {codec}, {num}, {ext}
+        # Default: "{base}_{codec}_{num}.{ext}"
+        # Opcional
         output_name: "{base}_hb_{num}.{ext}"
