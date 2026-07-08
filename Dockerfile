@@ -34,8 +34,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     ca-certificates \
     pkg-config \
+    nasm \
+    yasm \
     libdrm-dev \
     libva-dev \
+    libx264-dev \
+    libx265-dev \
+    libvpx-dev \
+    libaom-dev \
+    libmp3lame-dev \
+    libopus-dev \
+    libvorbis-dev \
     && rm -rf /var/lib/apt/lists/*
 
 RUN git clone --depth 1 --branch jellyfin-mpp https://github.com/nyanmisaka/mpp.git /tmp/mpp && \
@@ -54,6 +63,14 @@ RUN git clone --depth 1 --branch 7.1 https://github.com/nyanmisaka/ffmpeg-rockch
         --enable-version3 \
         --enable-rkmpp \
         --enable-libdrm \
+        --enable-libx264 \
+        --enable-libx265 \
+        --enable-libvpx \
+        --enable-libaom \
+        --enable-libmp3lame \
+        --enable-libopus \
+        --enable-libvorbis \
+        --enable-nonfree \
         --enable-pthreads \
         --enable-runtime-cpudetect \
         --enable-avfilter \
