@@ -777,6 +777,21 @@ presets:
     output_ext: .mp4
     description: "h264_omx H.264/AVC — qp 25, copy audio, .mp4 — Raspberry Pi OMX"
 
+  # ── RKMPP (Rockchip MPP — RK3588, NanoPi R6S, etc.) ──
+  h264_rkmpp:
+    codec: h264_rkmpp
+    quality: qp 25
+    audio_codec: copy
+    output_ext: .mp4
+    description: "h264_rkmpp H.264/AVC — qp 25, copy audio, .mp4 — Rockchip MPP hardware"
+
+  hevc_rkmpp:
+    codec: hevc_rkmpp
+    quality: qp 28
+    audio_codec: copy
+    output_ext: .mkv
+    description: "hevc_rkmpp H.265/HEVC — qp 28, copy audio, .mkv — Rockchip MPP hardware"
+
   # ── Legacy ──
   mpeg4:
     codec: mpeg4

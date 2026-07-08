@@ -12,6 +12,8 @@ pub struct HardwareAccelInfo {
     pub nvenc_devices: Vec<String>,
     pub qsv_available: bool,
     pub qsv_encoders: Vec<String>,
+    pub rkmpp_available: bool,
+    pub rkmpp_encoders: Vec<String>,
     pub all_encoders: Vec<String>,
 }
 
@@ -27,6 +29,8 @@ impl Default for HardwareAccelInfo {
             nvenc_devices: Vec::new(),
             qsv_available: false,
             qsv_encoders: Vec::new(),
+            rkmpp_available: false,
+            rkmpp_encoders: Vec::new(),
             all_encoders: Vec::new(),
         }
     }
@@ -88,6 +92,13 @@ pub async fn check_hardware_accel(ffmpeg_path: &str) -> HardwareAccelInfo {
         .cloned()
         .collect();
     info.qsv_available = !info.qsv_encoders.is_empty();
+
+    info.rkmpp_encoders = encoder_names
+        .iter()
+        .filter(|n| n.ends_with("_rkmpp"))
+        .cloned()
+        .collect();
+    info.rkmpp_available = !info.rkmpp_encoders.is_empty();
 
     info
 }

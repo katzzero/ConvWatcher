@@ -1,0 +1,65 @@
+# ─────────────────────────────────────────────────────────────
+# ConvWatcher — Rockchip MPP (RKMPP)
+# Uses Rockchip VPU for hardware-accelerated encoding.
+# Ideal for RK3588 boards (NanoPi R6S, Orange Pi 5, etc.).
+# ─────────────────────────────────────────────────────────────
+
+global:
+  file_check_interval: 2s
+  stable_time: 5s
+  ffmpeg_path: /usr/local/bin/ffmpeg
+  max_concurrent: 4
+  refresh_interval: 5m
+
+  codec_presets:
+    video: video_codecs.yaml
+
+  log:
+    errors_file: /app/logs/errors.log
+    max_log_files: 30
+    max_log_size_mb: 100
+    max_error_log_size_mb: 50
+
+  healthcheck:
+    http_port: 8080
+    bind_address: 0.0.0.0
+
+  disk_space:
+    check_interval: 60s
+    threshold: 500
+    check_output: false
+    check_watch: false
+
+  history:
+    persistent: false
+    file: /app/logs/history.json
+    max_records: 500
+
+# Docker compose must include:
+#   devices:
+#     - /dev/dri:/dev/dri
+#   image: ghcr.io/katzzero/convwatcher:latest-arm64
+# (arm64 image with jellyfin-ffmpeg + Rockchip MPP)
+
+watchers:
+  - name: rkmpp-h264
+    watch_folder: /app/inputs/rkmpp-h264/
+    output_folder: /app/outputs/rkmpp-h264/
+    type: video
+    rules:
+      - input_extensions: [.mp4, .avi, .mkv, .mov, .mxf, .mts]
+        preset: h264_rkmpp
+        output_name: "{base}_{codec}_{num}.{ext}"
+        check_duration: true
+        min_duration_ratio: 0.9
+
+  - name: rkmpp-h265
+    watch_folder: /app/inputs/rkmpp-h265/
+    output_folder: /app/outputs/rkmpp-h265/
+    type: video
+    rules:
+      - input_extensions: [.mp4, .mkv, .mov, .mxf]
+        preset: hevc_rkmpp
+        output_name: "{base}_{codec}_{num}.{ext}"
+        check_duration: true
+        min_duration_ratio: 0.9

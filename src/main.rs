@@ -80,8 +80,8 @@ async fn run() -> Result<()> {
 
     let hw_info = Arc::new(check_hardware_accel(&global_config.ffmpeg_path).await);
     info!(
-        "Hardware acceleration: VAAPI={}, NVENC={}, QSV={}",
-        hw_info.vaapi_available, hw_info.nvenc_available, hw_info.qsv_available
+        "Hardware acceleration: VAAPI={}, NVENC={}, QSV={}, RKMPP={}",
+        hw_info.vaapi_available, hw_info.nvenc_available, hw_info.qsv_available, hw_info.rkmpp_available
     );
 
     let health_server = Arc::new(

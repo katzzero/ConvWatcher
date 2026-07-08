@@ -205,6 +205,16 @@ fn build_hwaccel_args(codec: &str) -> (Vec<String>, Vec<String>) {
             ],
             vec![],
         )
+    } else if codec.contains("_rkmpp") {
+        (
+            vec![
+                "-init_hw_device".to_string(), "rkmpp=rkmpp_dev".to_string(),
+                "-hwaccel".to_string(), "rkmpp".to_string(),
+                "-hwaccel_output_format".to_string(), "drm_prime".to_string(),
+                "-hwaccel_device".to_string(), "rkmpp_dev".to_string(),
+            ],
+            vec!["-vf".to_string(), "format=nv12,hwupload".to_string()],
+        )
     } else {
         (vec![], vec![])
     }
@@ -315,6 +325,14 @@ mod tests {
         let (pre, post) = build_hwaccel_args("hevc_qsv");
         assert!(pre.contains(&"-init_hw_device".to_string()));
         assert!(post.is_empty());
+    }
+
+    #[test]
+    fn test_hwaccel_rkmpp() {
+        let (pre, post) = build_hwaccel_args("hevc_rkmpp");
+        assert!(pre.contains(&"-init_hw_device".to_string()));
+        assert!(pre.contains(&"-hwaccel".to_string()));
+        assert!(post.contains(&"-vf".to_string()));
     }
 
     #[test]
