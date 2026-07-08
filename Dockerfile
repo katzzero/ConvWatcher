@@ -29,10 +29,11 @@ FROM ubuntu:24.04 AS runtime-arm64
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
-    wget curl gnupg software-properties-common \
+    wget curl gnupg lsb-release \
     && rm -rf /var/lib/apt/lists/*
 
-RUN wget -O- https://repo.jellyfin.org/jellyfin-team.gpg.key | gpg --dearmor -o /usr/share/keyrings/jellyfin.gpg && \
+RUN mkdir -p /usr/share/keyrings && \
+    wget -O- https://repo.jellyfin.org/jellyfin-team.gpg.key | gpg --dearmor -o /usr/share/keyrings/jellyfin.gpg && \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/jellyfin.gpg] https://repo.jellyfin.org/ubuntu $(lsb_release -cs) main" > /etc/apt/sources.list.d/jellyfin.list
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
