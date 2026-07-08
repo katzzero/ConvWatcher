@@ -51,7 +51,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libnuma-dev \
     && rm -rf /var/lib/apt/lists/*
 
-RUN git clone --depth 1 --branch jellyfin-mpp-7.1 https://github.com/nyanmisaka/mpp.git /tmp/mpp && \
+RUN git clone --depth 1 --branch jellyfin-mpp https://github.com/nyanmisaka/mpp.git /tmp/mpp && \
     mkdir -p /tmp/mpp/build && \
     cd /tmp/mpp/build && \
     cmake -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE=Release -DBUILD_TEST=OFF -DBUILD_DEC_TEST=OFF -DBUILD_ENC_TEST=OFF .. && \
@@ -59,15 +59,7 @@ RUN git clone --depth 1 --branch jellyfin-mpp-7.1 https://github.com/nyanmisaka/
     make install && \
     rm -rf /tmp/mpp
 
-RUN git clone --depth 1 --branch master https://github.com/nyanmisaka/rga.git /tmp/rga && \
-    mkdir -p /tmp/rga/build && \
-    cd /tmp/rga/build && \
-    cmake -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE=Release .. && \
-    make -j$(nproc) && \
-    make install && \
-    rm -rf /tmp/rga
-
-RUN git clone --depth 1 --branch jellyfin-ffmpeg7 https://github.com/nyanmisaka/ffmpeg-rockchip.git /tmp/ffmpeg && \
+RUN git clone --depth 1 --branch 7.1 https://github.com/nyanmisaka/ffmpeg-rockchip.git /tmp/ffmpeg && \
     cd /tmp/ffmpeg && \
     PKG_CONFIG_PATH=/usr/lib/pkgconfig:/usr/share/pkgconfig \
     ./configure \
