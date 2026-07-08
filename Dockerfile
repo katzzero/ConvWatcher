@@ -32,6 +32,9 @@ RUN apk add --no-cache \
     py3-pip \
     wget \
     curl \
+    mesa-va-gallium \
+    libva \
+    intel-media-driver \
     && pip install --no-cache-dir img2pdf --break-system-packages \
     && rm -rf /var/cache/apk/*
 
