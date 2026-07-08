@@ -35,15 +35,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     poppler-utils \
     pandoc \
     python3-pip \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN wget -O /tmp/jellyfin-ffmpeg.deb \
+    gcc \
+    python3-dev \
+    && wget -O /tmp/jellyfin-ffmpeg.deb \
         "https://github.com/jellyfin/jellyfin-ffmpeg/releases/download/v7.1.4-3/jellyfin-ffmpeg7_7.1.4-3-noble_$(dpkg --print-architecture).deb" && \
     dpkg -i /tmp/jellyfin-ffmpeg.deb || true && \
     apt-get install -y -f --no-install-recommends && \
+    pip3 install --no-cache-dir img2pdf && \
     rm -rf /var/lib/apt/lists/* /tmp/jellyfin-ffmpeg.deb
-
-RUN pip3 install --no-cache-dir img2pdf
 
 RUN ln -sf /usr/lib/jellyfin-ffmpeg/ffmpeg /usr/local/bin/ffmpeg && \
     ln -sf /usr/lib/jellyfin-ffmpeg/ffprobe /usr/local/bin/ffprobe
