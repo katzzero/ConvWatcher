@@ -79,11 +79,13 @@ RUN git clone --depth 1 --branch 7.1 https://github.com/nyanmisaka/ffmpeg-rockch
     && \
     make -j$(nproc) && \
     make install && \
+    mkdir -p /so-export && \
+    find /usr/lib/aarch64-linux-gnu -name '*.so*' -type f -exec cp {} /so-export/ \; && \
     rm -rf /tmp/ffmpeg
 
 FROM ubuntu:24.04 AS runtime-arm64
 
-COPY --from=ffmpeg-builder-arm64 /usr/lib/aarch64-linux-gnu/*.so* /usr/lib/aarch64-linux-gnu/
+COPY --from=ffmpeg-builder-arm64 /so-export/*.so* /usr/lib/aarch64-linux-gnu/
 COPY --from=ffmpeg-builder-arm64 /usr/bin/ffmpeg /usr/bin/ffmpeg
 COPY --from=ffmpeg-builder-arm64 /usr/bin/ffprobe /usr/bin/ffprobe
 COPY --from=ffmpeg-builder-arm64 /usr/share/ffmpeg /usr/share/ffmpeg
