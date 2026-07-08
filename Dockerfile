@@ -25,27 +25,98 @@ RUN if [ "$TARGETARCH" = "arm64" ]; then \
     cargo build --release --target "$T" && \
     cp target/"$T"/release/convwatcher /convwatcher
 
+FROM ubuntu:24.04 AS ffmpeg-builder-arm64
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    git \
+    wget \
+    ca-certificates \
+    nasm \
+    yasm \
+    pkg-config \
+    libdrm-dev \
+    libva-dev \
+    libx264-dev \
+    libx265-dev \
+    libmp3lame-dev \
+    libopus-dev \
+    libvorbis-dev \
+    libvpx-dev \
+    libwebp-dev \
+    libfreetype6-dev \
+    libfontconfig1-dev \
+    libass-dev \
+    libnuma-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN git clone --depth 1 --branch jellyfin-mpp-7.1 https://github.com/nyanmisaka/mpp.git /tmp/mpp && \
+    mkdir -p /tmp/mpp/build && \
+    cd /tmp/mpp/build && \
+    cmake -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE=Release -DBUILD_TEST=OFF -DBUILD_DEC_TEST=OFF -DBUILD_ENC_TEST=OFF .. && \
+    make -j$(nproc) && \
+    make install && \
+    rm -rf /tmp/mpp
+
+RUN git clone --depth 1 --branch master https://github.com/nyanmisaka/rga.git /tmp/rga && \
+    mkdir -p /tmp/rga/build && \
+    cd /tmp/rga/build && \
+    cmake -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE=Release .. && \
+    make -j$(nproc) && \
+    make install && \
+    rm -rf /tmp/rga
+
+RUN git clone --depth 1 --branch jellyfin-ffmpeg7 https://github.com/nyanmisaka/ffmpeg-rockchip.git /tmp/ffmpeg && \
+    cd /tmp/ffmpeg && \
+    PKG_CONFIG_PATH=/usr/lib/pkgconfig:/usr/share/pkgconfig \
+    ./configure \
+        --prefix=/usr \
+        --enable-gpl \
+        --enable-version3 \
+        --enable-rkmpp \
+        --enable-rkrga \
+        --enable-libdrm \
+        --enable-libx264 \
+        --enable-libx265 \
+        --enable-libmp3lame \
+        --enable-libopus \
+        --enable-libvorbis \
+        --enable-libvpx \
+        --enable-libwebp \
+        --enable-libfreetype \
+        --enable-libfontconfig \
+        --enable-libass \
+        --enable-nonfree \
+        --enable-pthreads \
+        --enable-runtime-cpudetect \
+        --enable-avfilter \
+        --disable-static \
+        --enable-shared \
+    && \
+    make -j$(nproc) && \
+    make install && \
+    rm -rf /tmp/ffmpeg
+
 FROM ubuntu:24.04 AS runtime-arm64
+
+COPY --from=ffmpeg-builder-arm64 /usr/lib/aarch64-linux-gnu/*.so* /usr/lib/aarch64-linux-gnu/
+COPY --from=ffmpeg-builder-arm64 /usr/bin/ffmpeg /usr/bin/ffmpeg
+COPY --from=ffmpeg-builder-arm64 /usr/bin/ffprobe /usr/bin/ffprobe
+COPY --from=ffmpeg-builder-arm64 /usr/share/ffmpeg /usr/share/ffmpeg
+
+RUN ldconfig
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
-    wget curl gnupg \
+    wget curl \
     ghostscript \
     qpdf \
     poppler-utils \
     pandoc \
     python3-pip \
-    gcc \
-    python3-dev \
-    && wget -O /tmp/jellyfin-ffmpeg.deb \
-        "https://github.com/jellyfin/jellyfin-ffmpeg/releases/download/v7.1.4-3/jellyfin-ffmpeg7_7.1.4-3-noble_$(dpkg --print-architecture).deb" && \
-    dpkg -i /tmp/jellyfin-ffmpeg.deb || true && \
-    apt-get install -y -f --no-install-recommends && \
-    pip3 install --no-cache-dir img2pdf && \
-    rm -rf /var/lib/apt/lists/* /tmp/jellyfin-ffmpeg.deb
-
-RUN ln -sf /usr/lib/jellyfin-ffmpeg/ffmpeg /usr/local/bin/ffmpeg && \
-    ln -sf /usr/lib/jellyfin-ffmpeg/ffprobe /usr/local/bin/ffprobe
+    && pip3 install --no-cache-dir img2pdf \
+    && rm -rf /var/lib/apt/lists/*
 
 FROM alpine:3.21 AS runtime-amd64
 
