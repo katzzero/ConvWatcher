@@ -80,7 +80,8 @@ RUN git clone --depth 1 --branch 7.1 https://github.com/nyanmisaka/ffmpeg-rockch
     make -j$(nproc) && \
     make install && \
     mkdir -p /so-export && \
-    find /usr/lib/aarch64-linux-gnu -name '*.so*' -type f -exec cp {} /so-export/ \; && \
+    find /usr/lib/ -maxdepth 1 -name '*.so*' -type f -exec cp {} /so-export/ \; && \
+    find /usr/lib/aarch64-linux-gnu/ -maxdepth 1 -name '*.so*' -type f -exec cp {} /so-export/ \; && \
     rm -rf /tmp/ffmpeg
 
 FROM ubuntu:24.04 AS runtime-arm64
@@ -102,7 +103,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     poppler-utils \
     pandoc \
     python3-pip \
-    && pip3 install --no-cache-dir img2pdf \
+    && pip3 install --no-cache-dir img2pdf --break-system-packages \
     && apt-get remove -y build-essential python3-dev && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
