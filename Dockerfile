@@ -95,12 +95,15 @@ RUN ldconfig
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     wget curl \
+    build-essential \
+    python3-dev \
     ghostscript \
     qpdf \
     poppler-utils \
     pandoc \
     python3-pip \
     && pip3 install --no-cache-dir img2pdf \
+    && apt-get remove -y build-essential python3-dev && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
 FROM alpine:3.21 AS runtime-amd64
