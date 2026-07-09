@@ -85,6 +85,28 @@ cargo build --release
 docker-compose up -d
 ```
 
+The multi-arch image (`linux/amd64` + `linux/arm64`) is published to both **GitHub Container Registry** and **Docker Hub**:
+
+```
+ghcr.io/katzzero/convwatcher:latest
+katzzero/convwatcher:latest
+```
+
+- **amd64**: Alpine-based with VAAPI support (Intel/AMD GPUs)
+- **arm64**: Ubuntu-based with Rockchip MPP support (RK3588 — NanoPi R6S, Orange Pi 5, etc.) + VAAPI
+
+For Rockchip devices, ensure `/dev/dri` is mapped in docker-compose:
+
+```yaml
+services:
+  convwatcher:
+    image: ghcr.io/katzzero/convwatcher:latest
+    devices:
+      - /dev/dri:/dev/dri
+```
+
+See `examples/10_gpu_rkmpp.yaml` for a Rockchip MPP configuration.
+
 ---
 
 ## Configuration
@@ -251,7 +273,7 @@ presets:
     description: "H.264 NVENC — NVIDIA GPU"
 ```
 
-**Built-in presets** cover: CPU (libx264, libx265, VP9, AV1), GPU (NVENC, VAAPI, AMF, QSV, VideoToolbox), audio (MP3, AAC, Opus, FLAC), images (JPEG, WebP, AVIF, PNG), PDF modes, and document conversions.
+**Built-in presets** cover: CPU (libx264, libx265, VP9, AV1), GPU (NVENC, VAAPI, AMF, QSV, VideoToolbox, RKMPP), audio (MP3, AAC, Opus, FLAC), images (JPEG, WebP, AVIF, PNG), PDF modes, and document conversions.
 
 **`audio_codec: copy`** passes through audio without re-encoding (skips bitrate flag).
 
@@ -420,10 +442,10 @@ http://localhost:8080/dashboard
 - **File Stability Detection** — waits for files to finish uploading
 - **Worker Pool** — semaphore-based concurrency limiting
 - **Disk Space Monitor** — halts on low disk, auto-resumes
-- **Hardware Acceleration** — detects VAAPI/NVENC/QSV/AMF/QSV/VideoToolbox
+- **Hardware Acceleration** — detects VAAPI/NVENC/QSV/AMF/VideoToolbox/RKMPP
 - **Graceful Shutdown** — clean broadcast-channel shutdown
 - **Daemon Mode** — background execution with log-file output
-- **Multi-arch Docker** — AMD64 + ARM64
+- **Multi-arch Docker** — AMD64 (VAAPI) + ARM64 (Rockchip MPP)
 
 ---
 
@@ -442,6 +464,7 @@ See `examples/` for ready-to-use configurations:
 | `07_image_processing.yaml` | Image format conversions |
 | `08_pdf_processing.yaml` | PDF compression and extraction |
 | `09_document_conversion.yaml` | Document to PDF pipeline |
+| `10_gpu_rkmpp.yaml` | Rockchip MPP hardware encoding (RK3588/NanoPi R6S) |
 | `custom_presets.yaml` | Custom preset definitions |
 
 ---
