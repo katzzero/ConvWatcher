@@ -6,13 +6,15 @@ mod processor;
 mod utils;
 mod watcher;
 
+use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::Parser;
 use log::{error, info, warn};
-use tokio::sync::{broadcast, mpsc, Semaphore};
+use tokio::sync::{broadcast, mpsc, Mutex as TokioMutex, Semaphore};
 
 use cli::Cli;
 use config::watch::WatchConfig;
@@ -117,6 +119,8 @@ async fn run() -> Result<()> {
         global_config.max_concurrent_conversions as usize,
     ));
 
+    let processing_files: Arc<TokioMutex<HashSet<PathBuf>>> = Arc::new(TokioMutex::new(HashSet::new()));
+
     let (shutdown_tx, _) = broadcast::channel::<()>(1);
 
     let mut monitor_handles = Vec::new();
@@ -131,6 +135,7 @@ async fn run() -> Result<()> {
         let watch_folder = cfg_clone.watch_folder.clone();
         let shutdown_rx = shutdown_tx.subscribe();
         let gc = global_config.clone();
+        let pf = processing_files.clone();
 
         let handle = tokio::spawn(async move {
             watcher::monitor::run_file_monitor(
@@ -143,6 +148,7 @@ async fn run() -> Result<()> {
                 shutdown_rx,
                 cfg_clone,
                 gc,
+                pf,
             )
             .await;
         });
@@ -166,9 +172,10 @@ async fn run() -> Result<()> {
         let ffmpeg = global_config.ffmpeg_path.clone();
         let ffprobe = global_config.ffprobe_path.clone()
             .unwrap_or_else(|| global_config.ffmpeg_path.clone());
+        let pf = processing_files.clone();
 
         tokio::spawn(async move {
-            process_jobs(job_rx, health, err_logger, disk_config_clone, sem, ffmpeg, ffprobe).await;
+            process_jobs(job_rx, health, err_logger, disk_config_clone, sem, ffmpeg, ffprobe, pf).await;
         })
     };
 
@@ -232,8 +239,9 @@ async fn run() -> Result<()> {
         let health = health_server.clone();
         let tx = job_tx.clone();
         let gc = global_config.clone();
+        let pf = processing_files.clone();
         tokio::spawn(async move {
-            monitor_manager(reload_rx, tx, health, &gc).await;
+            monitor_manager(reload_rx, tx, health, &gc, pf).await;
         })
     };
 
@@ -321,6 +329,7 @@ async fn process_jobs(
     semaphore: Arc<Semaphore>,
     ffmpeg_path: String,
     ffprobe_path: String,
+    processing_files: Arc<TokioMutex<HashSet<PathBuf>>>,
 ) {
     while let Some(job) = job_rx.recv().await {
         let hs = health_server.clone();
@@ -329,6 +338,8 @@ async fn process_jobs(
         let sem = semaphore.clone();
         let ffmpeg = ffmpeg_path.clone();
         let ffprobe = ffprobe_path.clone();
+        let pf = processing_files.clone();
+        let file_path = job.file_path.clone();
 
         tokio::spawn(async move {
             let _permit = sem.acquire().await;
@@ -421,6 +432,7 @@ async fn process_jobs(
                     .await;
                 }
             }
+            pf.lock().await.remove(&file_path);
         });
     }
 
@@ -432,6 +444,7 @@ async fn monitor_manager(
     job_tx: mpsc::Sender<ConversionJob>,
     health_server: Arc<health::server::HealthServer>,
     global_config: &crate::config::global::GlobalConfig,
+    processing_files: Arc<TokioMutex<HashSet<PathBuf>>>,
 ) {
     let (shutdown_tx, _) = broadcast::channel::<()>(1);
     let mut current_handles: Vec<tokio::task::JoinHandle<()>> = Vec::new();
@@ -462,6 +475,7 @@ async fn monitor_manager(
             let cfg_clone = cfg.clone();
             let watch_folder = cfg_clone.watch_folder.clone();
             let gc = global_config.clone();
+            let pf = processing_files.clone();
 
             let handle = tokio::spawn(async move {
                 watcher::monitor::run_file_monitor(
@@ -474,6 +488,7 @@ async fn monitor_manager(
                     shutdown_rx,
                     cfg_clone,
                     gc,
+                    pf,
                 )
                 .await;
             });

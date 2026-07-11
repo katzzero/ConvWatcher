@@ -3,7 +3,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 
 use anyhow::{bail, Result};
-use log::{error, info};
+use log::{error, info, warn};
 use tokio::process::Command;
 
 use crate::config::global::DiskSpaceConfig;
@@ -30,6 +30,8 @@ pub async fn process_audio(
     check_disk_space(output_folder, watch_folder, disk_config).await;
 
     let _ = health_server.set_processing(watcher_name.clone(), file_name.clone());
+    let _ = health_server.dequeue(&file_name);
+    info!("[Processor] Processing started: {}", file_name);
 
     let output_folder_path = PathBuf::from(output_folder);
     let base_name = get_base_name(&file_name);
@@ -60,6 +62,7 @@ pub async fn process_audio(
         Err(e) => {
             let msg = format!("Audio conversion failed: {}", e);
             error!("{}", msg);
+            warn!("[Processor] Error discarded, continuing: {}", file_name);
             error_logger.log(&msg, &file_name, "audio::process");
             let _ = health_server.increment_error(&watcher_name);
             let _ = health_server.add_history(ConversionRecord {
@@ -72,6 +75,7 @@ pub async fn process_audio(
         }
     }
 
+    info!("[Processor] Job finished: {}", file_name);
     let _ = health_server.clear_processing(&watcher_name);
 }
 

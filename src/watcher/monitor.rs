@@ -1,11 +1,12 @@
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use log::{error, info, warn};
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, Mutex as TokioMutex};
 
 use crate::config::embedded::EmbeddedConfig;
 use crate::config::global::GlobalConfig;
@@ -25,6 +26,7 @@ pub async fn run_file_monitor(
     mut shutdown_rx: broadcast::Receiver<()>,
     current_config: WatchConfig,
     global_config: GlobalConfig,
+    processing_files: Arc<TokioMutex<HashSet<PathBuf>>>,
 ) {
     info!("Starting monitor for: {}", watch_folder);
 
@@ -100,6 +102,7 @@ pub async fn run_file_monitor(
                     &tx,
                     &health_server_clone,
                     &global_config,
+                    &processing_files,
                 ).await;
 
                 cleanup_stale_entries(&mut file_states, stable_time);
@@ -117,6 +120,7 @@ async fn scan_directory(
     tx: &mpsc::Sender<ConversionJob>,
     health_server: &Arc<HealthServer>,
     global_config: &GlobalConfig,
+    processing_files: &Arc<TokioMutex<HashSet<PathBuf>>>,
 ) {
     let entries = match std::fs::read_dir(watch_dir) {
         Ok(e) => e,
@@ -185,10 +189,15 @@ async fn scan_directory(
                 if current_size != last_size {
                     file_states.insert(path.clone(), (first_seen, current_size, current_size));
                 } else if first_seen.elapsed() >= stable_time {
+                    if processing_files.lock().await.contains(&path) {
+                        continue;
+                    }
                     if let Some(job) = create_job(&path, &file_name, config, watcher_name) {
                         let _ = health_server.enqueue(&file_name);
+                        processing_files.lock().await.insert(path.clone());
                         if tx.send(job).await.is_err() {
                             error!("Failed to send job to worker pool");
+                            processing_files.lock().await.remove(&path);
                         }
                     }
                     file_states.remove(&path);

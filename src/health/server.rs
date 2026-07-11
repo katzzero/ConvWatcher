@@ -136,7 +136,17 @@ impl HealthServer {
     pub fn enqueue(&self, file: &str) -> Result<()> {
         let mut queue = self.queue.lock().unwrap();
         let entry = queue.entry("global".to_string()).or_default();
-        entry.push(file.to_string());
+        if !entry.contains(&file.to_string()) {
+            entry.push(file.to_string());
+        }
+        Ok(())
+    }
+
+    pub fn dequeue(&self, file: &str) -> Result<()> {
+        let mut queue = self.queue.lock().unwrap();
+        if let Some(entry) = queue.get_mut("global") {
+            entry.retain(|f| f != file);
+        }
         Ok(())
     }
 
