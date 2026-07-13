@@ -14,7 +14,7 @@ use crate::config::watch::{WatchConfig, WatchType};
 use crate::health::server::HealthServer;
 use crate::processor::job::{ConversionJob, MatchedRule};
 
-type FileState = (Instant, u64, u64);
+type FileState = (Instant, u64);
 
 pub async fn run_file_monitor(
     watch_folder: &str,
@@ -87,7 +87,7 @@ pub async fn run_file_monitor(
                 if file_path.is_file() {
                     if let Ok(metadata) = std::fs::metadata(&file_path) {
                         let size = metadata.len();
-                        file_states.insert(file_path, (Instant::now(), size, size));
+                        file_states.insert(file_path, (Instant::now(), size));
                     }
                 }
             }
@@ -154,9 +154,9 @@ async fn scan_directory(
             let current_size = metadata.len();
 
             match file_states.get(&path) {
-                Some(&(first_seen, last_size, _)) => {
+                Some(&(first_seen, last_size)) => {
                     if current_size != last_size {
-                        file_states.insert(path.clone(), (first_seen, current_size, current_size));
+                        file_states.insert(path.clone(), (first_seen, current_size));
                     } else if first_seen.elapsed() >= stable_time {
                         validate_and_promote_config(
                             &path,
@@ -168,7 +168,7 @@ async fn scan_directory(
                 }
                 None => {
                     file_states
-                        .insert(path.clone(), (Instant::now(), current_size, current_size));
+                        .insert(path.clone(), (Instant::now(), current_size));
                 }
             }
             continue;
@@ -185,16 +185,24 @@ async fn scan_directory(
         let current_size = metadata.len();
 
         match file_states.get(&path) {
-            Some(&(first_seen, last_size, _)) => {
+            Some(&(first_seen, last_size)) => {
                 if current_size != last_size {
-                    file_states.insert(path.clone(), (first_seen, current_size, current_size));
+                    file_states.insert(path.clone(), (first_seen, current_size));
                 } else if first_seen.elapsed() >= stable_time {
-                    if processing_files.lock().await.contains(&path) {
+                    let already_processing = {
+                        let mut pf = processing_files.lock().await;
+                        if pf.contains(&path) {
+                            true
+                        } else {
+                            pf.insert(path.clone());
+                            false
+                        }
+                    };
+                    if already_processing {
                         continue;
                     }
                     if let Some(job) = create_job(&path, &file_name, config, watcher_name, global_config.input_file_action.clone()) {
                         let _ = health_server.enqueue(&file_name);
-                        processing_files.lock().await.insert(path.clone());
                         if tx.send(job).await.is_err() {
                             error!("Failed to send job to worker pool");
                             processing_files.lock().await.remove(&path);
@@ -204,7 +212,7 @@ async fn scan_directory(
                 }
             }
             None => {
-                file_states.insert(path.clone(), (Instant::now(), current_size, current_size));
+                file_states.insert(path.clone(), (Instant::now(), current_size));
             }
         }
     }
@@ -363,14 +371,7 @@ pub fn create_folders(watch_config: &WatchConfig) -> anyhow::Result<()> {
     let declared_names: std::collections::HashSet<&str> =
         watch_config.subfolders.iter().map(|s| s.name.as_str()).collect();
 
-    let rule_subfolders: Vec<&str> = match &watch_config.watch_type {
-        WatchType::Video { rules } => rules.iter().filter_map(|r| r.subfolder.as_deref()).collect(),
-        WatchType::Image { rules } => rules.iter().filter_map(|r| r.subfolder.as_deref()).collect(),
-        WatchType::Audio { rules } => rules.iter().filter_map(|r| r.subfolder.as_deref()).collect(),
-        WatchType::Pdf { rules } => rules.iter().filter_map(|r| r.subfolder.as_deref()).collect(),
-        WatchType::Document { rules } => rules.iter().filter_map(|r| r.subfolder.as_deref()).collect(),
-        WatchType::Custom { rules } => rules.iter().filter_map(|r| r.subfolder.as_deref()).collect(),
-    };
+    let rule_subfolders: Vec<&str> = rule_subfolder_names(&watch_config.watch_type);
 
     for sf_name in rule_subfolders {
         if !declared_names.contains(sf_name) {
@@ -382,9 +383,20 @@ pub fn create_folders(watch_config: &WatchConfig) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn rule_subfolder_names(watch_type: &WatchType) -> Vec<&str> {
+    match watch_type {
+        WatchType::Video { rules } => rules.iter().filter_map(|r| r.subfolder.as_deref()).collect(),
+        WatchType::Image { rules } => rules.iter().filter_map(|r| r.subfolder.as_deref()).collect(),
+        WatchType::Audio { rules } => rules.iter().filter_map(|r| r.subfolder.as_deref()).collect(),
+        WatchType::Pdf { rules } => rules.iter().filter_map(|r| r.subfolder.as_deref()).collect(),
+        WatchType::Document { rules } => rules.iter().filter_map(|r| r.subfolder.as_deref()).collect(),
+        WatchType::Custom { rules } => rules.iter().filter_map(|r| r.subfolder.as_deref()).collect(),
+    }
+}
+
 fn cleanup_stale_entries(file_states: &mut HashMap<PathBuf, FileState>, stable_time: Duration) {
     let stale_threshold = stable_time * 10;
-    file_states.retain(|path, (first_seen, _, _)| {
+    file_states.retain(|path, (first_seen, _)| {
         if !path.exists() {
             return false;
         }

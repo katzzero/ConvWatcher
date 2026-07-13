@@ -3,12 +3,12 @@ use std::process::Stdio;
 use std::sync::Arc;
 
 use anyhow::{bail, Result};
-use log::{error, info, warn};
+use log::warn;
 use tokio::process::Command;
 
 use crate::config::global::DiskSpaceConfig;
 use crate::config::watch::CustomRule;
-use crate::health::server::{ConversionRecord, HealthServer};
+use crate::health::server::HealthServer;
 use crate::logs::error_logger::ErrorLogger;
 use crate::utils::path::get_base_name;
 
@@ -29,11 +29,13 @@ pub async fn process_external(
     disk_config: &DiskSpaceConfig,
     input_file_action: crate::config::global::InputFileAction,
 ) {
-    check_disk_space(output_folder, watch_folder, disk_config).await;
-
-    let _ = health_server.set_processing(watcher_name.clone(), file_name.clone());
-    let _ = health_server.dequeue(&file_name);
-    info!("[Processor] Processing started: {}", file_name);
+    if check_disk_space(output_folder, watch_folder, disk_config).await {
+        warn!(
+            "Disk space low — pausing conversion of {} until space is freed",
+            file_name
+        );
+        return;
+    }
 
     let output_folder_path = PathBuf::from(output_folder);
     let base_name = get_base_name(&file_name);
@@ -51,38 +53,22 @@ pub async fn process_external(
         }
     };
 
-    match execute_custom(&file_path, &output_path, output_folder, &file_name, rule).await {
-        Ok(()) => {
-            info!("External conversion succeeded: {}", file_name);
-            let _ = health_server.increment_processed(&watcher_name);
-            let _ = health_server.add_history(ConversionRecord {
-                time: chrono::Local::now().format("%H:%M:%S").to_string(),
-                watcher: watcher_name.clone(),
-                file: file_name.clone(),
-                status: "done".to_string(),
-                output: output_path.to_string_lossy().to_string(),
-            });
-            super::super::utils::path::handle_input_file(&file_path, &input_file_action, true);
-        }
-        Err(e) => {
-            let msg = format!("External conversion failed: {}", e);
-            error!("{}", msg);
-            warn!("[Processor] Error discarded, continuing: {}", file_name);
-            error_logger.log(&msg, &file_name, "external::process");
-            let _ = health_server.increment_error(&watcher_name);
-            let _ = health_server.add_history(ConversionRecord {
-                time: chrono::Local::now().format("%H:%M:%S").to_string(),
-                watcher: watcher_name.clone(),
-                file: file_name.clone(),
-                status: "error".to_string(),
-                output: String::new(),
-            });
-            super::super::utils::path::handle_input_file(&file_path, &input_file_action, false);
-        }
-    }
-
-    info!("[Processor] Job finished: {}", file_name);
-    let _ = health_server.clear_processing(&watcher_name);
+    let input_path = file_path.clone();
+    let fname = file_name.clone();
+    super::runner::run_conversion(
+        watcher_name,
+        file_name,
+        file_path,
+        error_logger,
+        health_server,
+        input_file_action,
+        "external",
+        || async move {
+            execute_custom(&input_path, &output_path, output_folder, &fname, rule).await?;
+            Ok(output_path.to_string_lossy().to_string())
+        },
+    )
+    .await;
 }
 
 async fn execute_custom(

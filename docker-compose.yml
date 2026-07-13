@@ -10,6 +10,15 @@ services:
       - ./inputs:/app/inputs
       - ./outputs:/app/outputs
       - ./logs:/app/logs
+    # Hardware-acceleration device access (add only what your host has):
+    #   - Intel/AMD (VAAPI) and Rockchip (rkmpp): /dev/dri is required (below).
+    #   - NVIDIA (nvenc): run with `docker run --gpus all` and install
+    #     nvidia-container-toolkit on the host. No extra device mount needed here;
+    #     the toolkit injects the driver automatically. Presets h264_nvenc /
+    #     hevc_nvenc / av1_nvenc are already available.
+    #   - Raspberry Pi (v4l2m2m): also mount the Pi's encoder device, e.g.
+    #     `devices: - /dev/video11:/dev/video11` (verify which /dev/videoN your
+    #     Pi exposes). Use the h264_v4l2m2m / hevc_v4l2m2m presets.
     devices:
       - /dev/dri:/dev/dri
     environment:

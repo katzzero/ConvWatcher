@@ -76,11 +76,6 @@ impl HealthServer {
         self
     }
 
-    pub fn with_app_log(mut self, path: String) -> Self {
-        self.app_log_path = Some(path);
-        self
-    }
-
     pub fn with_hardware_info(self, info: HardwareAccelInfo) -> Self {
         *self.hw_info.lock().unwrap() = Some(info);
         self
@@ -175,7 +170,7 @@ impl HealthServer {
         Ok(())
     }
 
-    pub async fn run(&self) -> Result<()> {
+    pub fn run(&self) -> Result<()> {
         let addr = format!("{}:{}", self.bind_address, self.port);
         let server = match tiny_http::Server::http(&addr) {
             Ok(s) => s,

@@ -5,11 +5,11 @@ use std::sync::Arc;
 use anyhow::Result;
 use image::{DynamicImage, ImageFormat};
 use image::codecs::jpeg::JpegEncoder;
-use log::{error, info, warn};
+use log::warn;
 
 use crate::config::global::DiskSpaceConfig;
 use crate::config::watch::ImageRule;
-use crate::health::server::{ConversionRecord, HealthServer};
+use crate::health::server::HealthServer;
 use crate::logs::error_logger::ErrorLogger;
 use crate::utils::path::get_base_name;
 
@@ -28,11 +28,13 @@ pub async fn process_image(
     disk_config: &DiskSpaceConfig,
     input_file_action: crate::config::global::InputFileAction,
 ) {
-    check_disk_space(output_folder, watch_folder, disk_config).await;
-
-    let _ = health_server.set_processing(watcher_name.clone(), file_name.clone());
-    let _ = health_server.dequeue(&file_name);
-    info!("[Processor] Processing started: {}", file_name);
+    if check_disk_space(output_folder, watch_folder, disk_config).await {
+        warn!(
+            "Disk space low — pausing conversion of {} until space is freed",
+            file_name
+        );
+        return;
+    }
 
     let output_folder_path = PathBuf::from(output_folder);
     let base_name = get_base_name(&file_name);
@@ -48,38 +50,21 @@ pub async fn process_image(
         Err(_) => OutputNamer::generate_with_counter(&output_folder_path, &base_name, "image", ext),
     };
 
-    match convert_image(&file_path, &output_path, rule) {
-        Ok(()) => {
-            info!("Image conversion succeeded: {}", file_name);
-            let _ = health_server.increment_processed(&watcher_name);
-            let _ = health_server.add_history(ConversionRecord {
-                time: chrono::Local::now().format("%H:%M:%S").to_string(),
-                watcher: watcher_name.clone(),
-                file: file_name.clone(),
-                status: "done".to_string(),
-                output: output_path.to_string_lossy().to_string(),
-            });
-            super::super::utils::path::handle_input_file(&file_path, &input_file_action, true);
-        }
-        Err(e) => {
-            let msg = format!("Image conversion failed: {}", e);
-            error!("{}", msg);
-            warn!("[Processor] Error discarded, continuing: {}", file_name);
-            error_logger.log(&msg, &file_name, "image::process");
-            let _ = health_server.increment_error(&watcher_name);
-            let _ = health_server.add_history(ConversionRecord {
-                time: chrono::Local::now().format("%H:%M:%S").to_string(),
-                watcher: watcher_name.clone(),
-                file: file_name.clone(),
-                status: "error".to_string(),
-                output: String::new(),
-            });
-            super::super::utils::path::handle_input_file(&file_path, &input_file_action, false);
-        }
-    }
-
-    info!("[Processor] Job finished: {}", file_name);
-    let _ = health_server.clear_processing(&watcher_name);
+    let input_path = file_path.clone();
+    super::runner::run_conversion(
+        watcher_name,
+        file_name,
+        file_path,
+        error_logger,
+        health_server,
+        input_file_action,
+        "image",
+        || async move {
+            convert_image(&input_path, &output_path, rule)?;
+            Ok(output_path.to_string_lossy().to_string())
+        },
+    )
+    .await;
 }
 
 fn convert_image(input: &Path, output: &Path, rule: &ImageRule) -> Result<()> {

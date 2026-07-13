@@ -5,6 +5,9 @@ use anyhow::Result;
 pub struct OutputNamer;
 
 impl OutputNamer {
+    /// Build an output path from the template, substituting `{base}`, `{codec}`,
+    /// `{ext}` and an auto-incrementing `{num}` so that the result never
+    /// collides with an existing file. Returns the first free path.
     pub fn generate_path(
         output_folder: &Path,
         base_name: &str,
@@ -12,13 +15,22 @@ impl OutputNamer {
         codec: &str,
         ext: &str,
     ) -> Result<PathBuf> {
-        let filename = template
-            .replace("{base}", base_name)
-            .replace("{codec}", codec)
-            .replace("{num}", "0")
-            .replace("{ext}", ext);
+        for num in 0..1000 {
+            let filename = template
+                .replace("{base}", base_name)
+                .replace("{codec}", codec)
+                .replace("{num}", &num.to_string())
+                .replace("{ext}", ext);
 
-        Ok(output_folder.join(filename))
+            let path = output_folder.join(filename);
+            if !path.exists() {
+                return Ok(path);
+            }
+        }
+
+        // Exhausted the numbered range — let the caller fall back to a
+        // timestamp-based counter name.
+        Err(anyhow::anyhow!("No free output path found in range"))
     }
 
     pub fn generate_with_counter(

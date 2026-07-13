@@ -1,10 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct WatchConfigCollection {
-    pub watchers: Vec<WatchConfig>,
-}
-
 /// Declares a subfolder that the watcher will create and use for rule matching.
 /// Files placed in `->{name}/` are processed by rules with `subfolder: <name>`.
 #[derive(Debug, Clone, Deserialize, Serialize)]

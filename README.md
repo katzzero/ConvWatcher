@@ -92,8 +92,22 @@ ghcr.io/katzzero/convwatcher:latest
 katzzero/convwatcher:latest
 ```
 
-- **amd64**: Alpine-based with VAAPI support (Intel/AMD GPUs)
-- **arm64**: Ubuntu-based with Rockchip MPP support (RK3588 — NanoPi R6S, Orange Pi 5, etc.) + VAAPI
+- **amd64**: Ubuntu-based with **VAAPI** (Intel/AMD GPUs) **and NVENC** (NVIDIA GPUs) support
+- **arm64**: Ubuntu-based with **Rockchip MPP** (RK3588 — NanoPi R6S, Orange Pi 5, etc.) **and Raspberry Pi V4L2 mem2mem** (h264/hevc) support
+
+### Hardware acceleration matrix
+
+| Backend | Hardware | Arch | Presets | Device / runtime requirement |
+|---------|----------|------|---------|------------------------------|
+| VAAPI | Intel / AMD GPU | amd64 | `h264_vaapi`, `hevc_vaapi`, `vp9_vaapi`, `av1_vaapi` | `/dev/dri` mounted |
+| NVENC | NVIDIA GPU | amd64 | `h264_nvenc`, `h264_nvenc_high`, `hevc_nvenc`, `hevc_nvenc_high`, `av1_nvenc` | run with `docker run --gpus all` + host `nvidia-container-toolkit` |
+| RKMPP | Rockchip (RK3588, etc.) | arm64 | `h264_rkmpp`, `hevc_rkmpp` | `/dev/dri` mounted |
+| V4L2 mem2mem | Raspberry Pi (3/4/5) | arm64 | `h264_v4l2m2m`, `hevc_v4l2m2m` | `/dev/videoN` mounted (e.g. `/dev/video11`) |
+
+ConvWatcher detects the available encoders at startup and logs them
+(`VAAPI=… NVENC=… RKMPP=…`); route files to the matching preset via a
+subfolder or root rule. The legacy `h264_omx` (Raspberry Pi OMX) preset is
+deprecated — OMX was removed in FFmpeg 6.x+, use `h264_v4l2m2m` instead.
 
 For Rockchip devices, ensure `/dev/dri` is mapped in docker-compose:
 
@@ -442,10 +456,10 @@ http://localhost:8080/dashboard
 - **File Stability Detection** — waits for files to finish uploading
 - **Worker Pool** — semaphore-based concurrency limiting
 - **Disk Space Monitor** — halts on low disk, auto-resumes
-- **Hardware Acceleration** — detects VAAPI/NVENC/QSV/AMF/VideoToolbox/RKMPP
+- **Hardware Acceleration** — detects VAAPI/NVENC/QSV/AMF/VideoToolbox/RKMPP and Raspberry Pi V4L2 mem2mem
 - **Graceful Shutdown** — clean broadcast-channel shutdown
 - **Daemon Mode** — background execution with log-file output
-- **Multi-arch Docker** — AMD64 (VAAPI) + ARM64 (Rockchip MPP)
+- **Multi-arch Docker** — AMD64 (VAAPI + NVENC) + ARM64 (Rockchip MPP + Raspberry Pi V4L2)
 
 ---
 

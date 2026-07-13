@@ -1,20 +1,26 @@
 use crate::config::global::{DiskSpaceConfig, DiskSpaceThreshold};
+use log::warn;
 
+/// Returns `true` if disk space is critically low and conversions should be
+/// paused (the caller should skip the current file and retry it later).
 pub async fn check_disk_space(
     output_folder: &str,
     watch_folder: &str,
     config: &DiskSpaceConfig,
-) {
+) -> bool {
     if !config.check_output && !config.check_watch {
-        return;
+        return false;
     }
 
     #[cfg(unix)]
     {
+        let mut low = false;
+
         if config.check_output {
             if let Some(parent) = get_mount_point(output_folder) {
                 if let Err(e) = check_available(&parent, &config.threshold, "output") {
-                    log::warn!("Disk space low (output): {}", e);
+                    warn!("Disk space low (output): {}", e);
+                    low = true;
                 }
             }
         }
@@ -22,10 +28,19 @@ pub async fn check_disk_space(
         if config.check_watch {
             if let Some(parent) = get_mount_point(watch_folder) {
                 if let Err(e) = check_available(&parent, &config.threshold, "watch") {
-                    log::warn!("Disk space low (watch): {}", e);
+                    warn!("Disk space low (watch): {}", e);
+                    low = true;
                 }
             }
         }
+
+        low
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = (output_folder, watch_folder, config);
+        false
     }
 }
 

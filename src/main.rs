@@ -107,7 +107,8 @@ async fn run() -> Result<()> {
     let health_handle = {
         let hs = health_server.clone();
         tokio::spawn(async move {
-            if let Err(e) = hs.run().await {
+            let hs = hs.clone();
+            if let Err(e) = tokio::task::spawn_blocking(move || hs.run()).await {
                 error!("Health server error: {}", e);
             }
         })
@@ -195,20 +196,37 @@ async fn run() -> Result<()> {
 
     let cfg_path_for_reloader = cli.config.clone();
     let reload_tx_clone = reload_tx.clone();
-    let global_for_hotreload = global_config.clone();
+    let initial_config_sig =
+        serde_yaml::to_string(&(&global_for_reloader, &watch_configs)).ok();
+
     let config_reload_handle = {
         tokio::spawn(async move {
             let interval =
                 Duration::from_secs(global_for_reloader.config_refresh_interval_s);
 
+            let mut last_sig = initial_config_sig;
+
             loop {
                 tokio::time::sleep(interval).await;
                 info!("Checking for config changes...");
 
-                if let Ok((_, new_configs, _)) =
-                    config::load_config(cfg_path_for_reloader.as_deref())
-                {
-                    let _ = reload_tx_clone.send(new_configs).await;
+                match config::load_config(cfg_path_for_reloader.as_deref()) {
+                    Ok((global, new_configs, _)) => {
+                        let sig = match serde_yaml::to_string(&(&global, &new_configs)) {
+                            Ok(s) => s,
+                            Err(e) => {
+                                warn!("Failed to serialize config for diff: {}", e);
+                                continue;
+                            }
+                        };
+                        if last_sig.as_deref() != Some(sig.as_str()) {
+                            last_sig = Some(sig);
+                            let _ = reload_tx_clone.send(new_configs).await;
+                        } else {
+                            info!("No config changes detected");
+                        }
+                    }
+                    Err(e) => warn!("Failed to reload config: {}", e),
                 }
             }
         })
@@ -287,7 +305,9 @@ fn setup_logging(cli: &Cli) -> Result<()> {
             ))
         });
 
-    if cli.daemon {
+    // `--daemon` only redirects logs to a file (it does NOT fork/detach the
+    // process). `--no_daemon` forces console logging even if `--daemon` is set.
+    if cli.daemon && !cli.no_daemon {
         match std::fs::OpenOptions::new()
             .create(true)
             .append(true)

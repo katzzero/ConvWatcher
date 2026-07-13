@@ -15,23 +15,6 @@ use watch::{WatchConfig, WatchType};
 
 const CONFIG_PATH: &str = "config/config.yaml";
 
-fn invalidate_and_replace(path: &Path, default_yaml: &str, label: &str) {
-    let invalid_path = path.with_extension("yaml.invalid");
-    if let Err(e) = fs::rename(path, &invalid_path) {
-        warn!("Failed to rename invalid {} {:?}: {}", label, path, e);
-    } else {
-        warn!(
-            "{} {:?} is incompatible — renamed to {:?}",
-            label, path, invalid_path
-        );
-    }
-    if let Err(e) = fs::write(path, default_yaml) {
-        warn!("Failed to write default {}: {}", label, e);
-    } else {
-        info!("Created fresh default {}: {}", label, path.display());
-    }
-}
-
 /// Load all configuration from a single config.yaml file.
 /// Returns (GlobalConfig, Vec<WatchConfig>, CodecRegistry).
 pub fn load_config(custom_path: Option<&Path>) -> Result<(GlobalConfig, Vec<WatchConfig>, CodecRegistry)> {
@@ -775,7 +758,7 @@ presets:
     quality: qp 25
     audio_codec: copy
     output_ext: .mp4
-    description: "h264_omx H.264/AVC — qp 25, copy audio, .mp4 — Raspberry Pi OMX"
+    description: "h264_omx H.264/AVC — qp 25, copy audio, .mp4 — Raspberry Pi OMX (legacy; OMX removed in FFmpeg 6.x+, prefer h264_v4l2m2m)"
 
   # ── RKMPP (Rockchip MPP — RK3588, NanoPi R6S, etc.) ──
   h264_rkmpp:
@@ -790,7 +773,22 @@ presets:
     quality: qp 28
     audio_codec: copy
     output_ext: .mkv
-    description: "hevc_rkmpp H.265/HEVC — qp 28, copy audio, .mkv — Rockchip MPP hardware"
+    description: "hevc_rkmpp HEVC/HEVC — qp 28, copy audio, .mkv — Rockchip MPP hardware"
+
+  # ── Raspberry Pi (V4L2 mem2mem) ──
+  h264_v4l2m2m:
+    codec: h264_v4l2m2m
+    quality: 3000k
+    audio_codec: aac
+    output_ext: .mp4
+    description: "h264_v4l2m2m H.264/AVC — V4L2 mem2mem, Raspberry Pi hardware"
+
+  hevc_v4l2m2m:
+    codec: hevc_v4l2m2m
+    quality: 3000k
+    audio_codec: aac
+    output_ext: .mkv
+    description: "hevc_v4l2m2m HEVC/H.265 — V4L2 mem2mem, Raspberry Pi 4/5 hardware"
 
   # ── Legacy ──
   mpeg4:
