@@ -174,7 +174,7 @@ async fn scan_directory(
             continue;
         }
 
-        if file_name.ends_with(".invalid") {
+        if file_name.ends_with(".invalid") || file_name.ends_with(".done") || file_name.ends_with(".error") {
             continue;
         }
 

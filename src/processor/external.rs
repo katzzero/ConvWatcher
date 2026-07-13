@@ -75,6 +75,7 @@ pub async fn process_external(
                 status: "error".to_string(),
                 output: String::new(),
             });
+            super::super::utils::path::mark_error(&file_path);
         }
     }
 

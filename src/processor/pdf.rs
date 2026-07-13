@@ -57,6 +57,7 @@ pub async fn process_pdf(
                 status: "done".to_string(),
                 output: output_path.to_string_lossy().to_string(),
             });
+            super::super::utils::path::mark_done(&file_path);
         }
         Err(e) => {
             let msg = format!("PDF conversion failed: {}", e);
@@ -71,6 +72,7 @@ pub async fn process_pdf(
                 status: "error".to_string(),
                 output: String::new(),
             });
+            super::super::utils::path::mark_error(&file_path);
         }
     }
 
