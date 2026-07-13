@@ -27,6 +27,7 @@ pub async fn process_video(
     disk_config: &DiskSpaceConfig,
     ffmpeg_path: &str,
     ffprobe_path: &str,
+    input_file_action: crate::config::global::InputFileAction,
 ) {
     check_disk_space(output_folder, watch_folder, disk_config).await;
 
@@ -59,7 +60,7 @@ pub async fn process_video(
                 status: "done".to_string(),
                 output: output_path.to_string_lossy().to_string(),
             });
-            super::super::utils::path::mark_done(&file_path);
+            super::super::utils::path::handle_input_file(&file_path, &input_file_action, true);
         }
         Err(e) => {
             let msg = format!("Video conversion failed: {}", e);
@@ -74,7 +75,7 @@ pub async fn process_video(
                 status: "error".to_string(),
                 output: String::new(),
             });
-            super::super::utils::path::mark_error(&file_path);
+            super::super::utils::path::handle_input_file(&file_path, &input_file_action, false);
         }
     }
 

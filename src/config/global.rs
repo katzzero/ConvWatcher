@@ -12,6 +12,7 @@ fn default_healthcheck() -> HealthcheckConfig { HealthcheckConfig::default() }
 fn default_disk_space() -> DiskSpaceConfig { DiskSpaceConfig::default() }
 fn default_history() -> HistoryConfig { HistoryConfig::default() }
 fn default_codec_presets() -> CodecPresetPaths { CodecPresetPaths::default() }
+fn default_input_action() -> InputFileAction { InputFileAction::Mark }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct GlobalConfig {
@@ -53,6 +54,9 @@ pub struct GlobalConfig {
 
     #[serde(default = "default_history")]
     pub history: HistoryConfig,
+
+    #[serde(default = "default_input_action")]
+    pub input_file_action: InputFileAction,
 }
 
 impl Default for GlobalConfig {
@@ -71,7 +75,22 @@ impl Default for GlobalConfig {
             healthcheck: default_healthcheck(),
             disk_space: default_disk_space(),
             history: default_history(),
+            input_file_action: default_input_action(),
         }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum InputFileAction {
+    Mark,
+    Delete,
+    None,
+}
+
+impl Default for InputFileAction {
+    fn default() -> Self {
+        Self::Mark
     }
 }
 

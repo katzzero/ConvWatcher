@@ -192,7 +192,7 @@ async fn scan_directory(
                     if processing_files.lock().await.contains(&path) {
                         continue;
                     }
-                    if let Some(job) = create_job(&path, &file_name, config, watcher_name) {
+                    if let Some(job) = create_job(&path, &file_name, config, watcher_name, global_config.input_file_action.clone()) {
                         let _ = health_server.enqueue(&file_name);
                         processing_files.lock().await.insert(path.clone());
                         if tx.send(job).await.is_err() {
@@ -334,6 +334,7 @@ fn create_job(
     file_name: &str,
     watch_config: &WatchConfig,
     watcher_name: &str,
+    input_file_action: crate::config::global::InputFileAction,
 ) -> Option<ConversionJob> {
     find_matching_rule(file_path, file_name, &watch_config.watch_type).map(|rule| {
         ConversionJob {
@@ -343,6 +344,7 @@ fn create_job(
             matched_rule: rule,
             output_folder: watch_config.output_folder.clone(),
             watch_folder: watch_config.watch_folder.clone(),
+            input_file_action,
         }
     })
 }
@@ -430,7 +432,7 @@ mod tests {
     fn test_create_job_matches_by_extension() {
         let config = test_video_config();
         let file_path = PathBuf::from("/app/inputs/test/clip.mp4");
-        let job = create_job(&file_path, "clip.mp4", &config, "watcher_test");
+        let job = create_job(&file_path, "clip.mp4", &config, "watcher_test", crate::config::global::InputFileAction::Mark);
         assert!(job.is_some());
         let job = job.unwrap();
         assert_eq!(job.file_name, "clip.mp4");
@@ -440,7 +442,7 @@ mod tests {
     fn test_create_job_matches_by_subfolder_format() {
         let config = test_video_config();
         let file_path = PathBuf::from("/app/inputs/test/->gpu/broadcast.mxf");
-        let job = create_job(&file_path, "broadcast.mxf", &config, "watcher_test");
+        let job = create_job(&file_path, "broadcast.mxf", &config, "watcher_test", crate::config::global::InputFileAction::Mark);
         assert!(job.is_some());
     }
 
@@ -448,7 +450,7 @@ mod tests {
     fn test_create_job_no_match_unknown_extension() {
         let config = test_video_config();
         let file_path = PathBuf::from("/app/inputs/test/clip.xyz");
-        let job = create_job(&file_path, "clip.xyz", &config, "watcher_test");
+        let job = create_job(&file_path, "clip.xyz", &config, "watcher_test", crate::config::global::InputFileAction::Mark);
         assert!(job.is_none());
     }
 
@@ -458,7 +460,7 @@ mod tests {
         // Subfolder format doesn't match, extension doesn't match → no job
         let config = test_video_config();
         let file_path = PathBuf::from("/app/inputs/test/->unknown/clip.xyz");
-        let job = create_job(&file_path, "clip.xyz", &config, "watcher_test");
+        let job = create_job(&file_path, "clip.xyz", &config, "watcher_test", crate::config::global::InputFileAction::Mark);
         assert!(job.is_none());
     }
 

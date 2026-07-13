@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use crate::config::global::InputFileAction;
 use crate::config::watch::{
     AudioRule, CustomRule, DocumentRule, ImageRule, PdfRule, VideoRule,
 };
@@ -20,4 +21,5 @@ pub struct ConversionJob {
     pub matched_rule: MatchedRule,
     pub output_folder: String,
     pub watch_folder: String,
+    pub input_file_action: InputFileAction,
 }

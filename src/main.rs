@@ -343,6 +343,7 @@ async fn process_jobs(
 
         tokio::spawn(async move {
             let _permit = sem.acquire().await;
+            let action = job.input_file_action.clone();
             match job.matched_rule {
                 processor::job::MatchedRule::Video(ref rule) => {
                     processor::video::process_video(
@@ -357,6 +358,7 @@ async fn process_jobs(
                         &dc,
                         &ffmpeg,
                         &ffprobe,
+                        action,
                     )
                     .await;
                 }
@@ -371,6 +373,7 @@ async fn process_jobs(
                         el.clone(),
                         hs.clone(),
                         &dc,
+                        action,
                     )
                     .await;
                 }
@@ -386,6 +389,7 @@ async fn process_jobs(
                         hs.clone(),
                         &dc,
                         &ffmpeg,
+                        action,
                     )
                     .await;
                 }
@@ -400,6 +404,7 @@ async fn process_jobs(
                         el.clone(),
                         hs.clone(),
                         &dc,
+                        action,
                     )
                     .await;
                 }
@@ -414,6 +419,7 @@ async fn process_jobs(
                         el.clone(),
                         hs.clone(),
                         &dc,
+                        action,
                     )
                     .await;
                 }
@@ -428,6 +434,7 @@ async fn process_jobs(
                         el.clone(),
                         hs.clone(),
                         &dc,
+                        action,
                     )
                     .await;
                 }
