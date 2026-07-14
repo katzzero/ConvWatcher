@@ -41,7 +41,7 @@ pub async fn run_conversion<F, Fut>(
                 file: file_name.clone(),
                 status: "done".to_string(),
                 output,
-            });
+            }).await;
             crate::utils::path::handle_input_file(&file_path, &input_file_action, true);
         }
         Err(e) => {
