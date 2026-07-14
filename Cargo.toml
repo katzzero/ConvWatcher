@@ -20,6 +20,7 @@ chrono = "0.4"
 image = "0.25"
 tiny_http = "0.12"
 anyhow = "1.0"
+subtle = "2"
 
 [profile.release]
 opt-level = 3

@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 
 use log::{error, info, warn};
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use subtle::ConstantTimeEq;
 use tokio::sync::{broadcast, mpsc, Mutex as TokioMutex};
 
 use crate::config::embedded::EmbeddedConfig;
@@ -246,10 +247,13 @@ fn validate_and_promote_config(
              (embedded_secret is empty)",
             config_path
         );
-    } else if embedded.secret != global.embedded_secret {
-        warn!("Secret mismatch in {:?}", config_path);
-        create_invalid_marker(config_path, manifest);
-        return;
+    } else {
+        let secrets_match = bool::from(global.embedded_secret.as_bytes().ct_eq(embedded.secret.as_bytes()));
+        if !secrets_match {
+            warn!("Secret mismatch in {:?}", config_path);
+            create_invalid_marker(config_path, manifest);
+            return;
+        }
     }
 
     let expected_type = manifest.watch_type.type_name();

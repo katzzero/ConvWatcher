@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use log::{info, warn};
+use subtle::ConstantTimeEq;
 use tokio::sync::mpsc;
 
 use crate::config::embedded::EmbeddedConfig;
@@ -117,8 +118,11 @@ impl EmbeddedScanner {
         let content = std::fs::read_to_string(config_path)?;
         let embedded: EmbeddedConfig = serde_yaml::from_str(&content)?;
 
-        if !self.secret.is_empty() && embedded.secret != self.secret {
-            anyhow::bail!("Secret mismatch in {:?}", config_path);
+        if !self.secret.is_empty() {
+            let secrets_match = bool::from(self.secret.as_bytes().ct_eq(embedded.secret.as_bytes()));
+            if !secrets_match {
+                anyhow::bail!("Secret mismatch in {:?}", config_path);
+            }
         }
 
         let config_name = config_path
