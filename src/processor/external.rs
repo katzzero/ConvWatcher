@@ -15,8 +15,6 @@ use crate::utils::path::get_base_name;
 use super::disk::check_disk_space;
 use super::namer::OutputNamer;
 
-const DANGEROUS_CHARS: &[&str] = &[";", "&&", "||", "|", "`", "$(", "\n", "\r"];
-
 pub async fn process_external(
     watcher_name: String,
     file_name: String,
@@ -85,25 +83,24 @@ async fn execute_custom(
     let basename = get_base_name(file_name);
     let ext = rule.output_ext.as_deref().unwrap_or(".mp4").trim_start_matches('.');
 
-    let expanded = command
-        .replace("{input}", &input.to_string_lossy())
-        .replace("{output}", &output.to_string_lossy())
-        .replace("{basename}", &basename)
-        .replace("{ext}", ext)
-        .replace("{output_folder}", output_folder);
+    let argv = build_argv(
+        command,
+        &input.to_string_lossy(),
+        &output.to_string_lossy(),
+        &basename,
+        ext,
+        output_folder,
+    )?;
 
-    validate_placeholder_values(&expanded)?;
-
-    let parts: Vec<&str> = expanded.split_whitespace().collect();
-    if parts.is_empty() {
+    if argv.is_empty() {
         bail!("Empty command");
     }
 
-    let program = parts[0];
-    let args: Vec<&str> = parts[1..].to_vec();
+    let program = &argv[0];
+    let args = &argv[1..];
 
     let output_result = Command::new(program)
-        .args(&args)
+        .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
@@ -117,6 +114,38 @@ async fn execute_custom(
     Ok(())
 }
 
+/// Split template into argv tokens, then replace placeholders in each token
+/// individually. This preserves paths containing whitespace as single argv
+/// elements.
+fn build_argv(
+    template: &str,
+    input: &str,
+    output: &str,
+    basename: &str,
+    ext: &str,
+    output_folder: &str,
+) -> Result<Vec<String>> {
+    let tokens: Vec<&str> = template.split_whitespace().collect();
+    let mut argv = Vec::with_capacity(tokens.len());
+
+    for token in tokens {
+        let replaced = token
+            .replace("{input}", input)
+            .replace("{output}", output)
+            .replace("{basename}", basename)
+            .replace("{ext}", ext)
+            .replace("{output_folder}", output_folder);
+
+        if replaced.contains("..") {
+            bail!("Expanded token '{}' contains '..' path traversal", replaced);
+        }
+
+        argv.push(replaced);
+    }
+
+    Ok(argv)
+}
+
 fn validate_command_template(template: &str) -> Result<()> {
     if template.contains("..") {
         bail!("Template contains '..' path traversal");
@@ -124,14 +153,55 @@ fn validate_command_template(template: &str) -> Result<()> {
     Ok(())
 }
 
-fn validate_placeholder_values(value: &str) -> Result<()> {
-    if value.contains("..") {
-        bail!("Expanded value contains '..' path traversal");
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_argv_basic() {
+        let argv = build_argv(
+            "ffmpeg -i {input} {output}",
+            "/in/video.mp4",
+            "/out/video_h264.mp4",
+            "video",
+            "mp4",
+            "/out/",
+        )
+        .unwrap();
+        assert_eq!(argv, vec!["ffmpeg", "-i", "/in/video.mp4", "/out/video_h264.mp4"]);
     }
-    for &dangerous in DANGEROUS_CHARS {
-        if value.contains(dangerous) {
-            bail!("Expanded value contains dangerous character: {}", dangerous);
-        }
+
+    #[test]
+    fn test_build_argv_preserves_spaces_in_paths() {
+        let argv = build_argv(
+            "ffmpeg -i {input} {output}",
+            "/in/my video.mp4",
+            "/out/my video_h264.mp4",
+            "my video",
+            "mp4",
+            "/out/",
+        )
+        .unwrap();
+        assert_eq!(argv[2], "/in/my video.mp4");
+        assert_eq!(argv[3], "/out/my video_h264.mp4");
     }
-    Ok(())
+
+    #[test]
+    fn test_build_argv_rejects_traversal() {
+        let result = build_argv(
+            "ffmpeg -i {input} -filter {basename}",
+            "/in/video.mp4",
+            "",
+            "../../etc",
+            "",
+            "/out/",
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_template_rejects_dotdot() {
+        assert!(validate_command_template("ffmpeg -i ../secret").is_err());
+        assert!(validate_command_template("ffmpeg -i {input}").is_ok());
+    }
 }
