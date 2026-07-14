@@ -40,7 +40,7 @@ fn parse_duration_to_ms(s: &str) -> Option<u64> {
 fn parse_duration_to_s(s: &str) -> Option<u64> {
     let s = s.trim();
     if let Some(ms_str) = s.strip_suffix("ms") {
-        return ms_str.trim().parse::<f64>().ok().map(|n| ((n / 1000.0).max(1.0)) as u64);
+        return ms_str.trim().parse::<f64>().ok().map(|n| (n / 1000.0).ceil() as u64);
     }
     if let Some(s_str) = s.strip_suffix('s') {
         return s_str.trim().parse().ok();
