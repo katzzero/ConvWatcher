@@ -1,3 +1,6 @@
+use std::fmt;
+
+use serde::de::{self, Deserializer, Visitor};
 use serde::{Deserialize, Serialize};
 
 use super::codec_registry::CodecPresetPaths;
@@ -14,12 +17,95 @@ fn default_history() -> HistoryConfig { HistoryConfig::default() }
 fn default_codec_presets() -> CodecPresetPaths { CodecPresetPaths::default() }
 fn default_input_action() -> InputFileAction { InputFileAction::Mark }
 
+/// Parse a duration string like "2s", "5m", "500ms", "1h" into milliseconds.
+/// A bare integer is treated as milliseconds.
+fn parse_duration_to_ms(s: &str) -> Option<u64> {
+    let s = s.trim();
+    if let Some(ms_str) = s.strip_suffix("ms") {
+        return ms_str.trim().parse().ok();
+    }
+    if let Some(s_str) = s.strip_suffix('s') {
+        return s_str.trim().parse::<f64>().ok().map(|n| (n * 1000.0) as u64);
+    }
+    if let Some(m_str) = s.strip_suffix('m') {
+        return m_str.trim().parse::<f64>().ok().map(|n| (n * 60_000.0) as u64);
+    }
+    if let Some(h_str) = s.strip_suffix('h') {
+        return h_str.trim().parse::<f64>().ok().map(|n| (n * 3_600_000.0) as u64);
+    }
+    s.parse().ok()
+}
+
+/// Parse a duration string into seconds. A bare integer is treated as seconds.
+fn parse_duration_to_s(s: &str) -> Option<u64> {
+    let s = s.trim();
+    if let Some(ms_str) = s.strip_suffix("ms") {
+        return ms_str.trim().parse::<f64>().ok().map(|n| ((n / 1000.0).max(1.0)) as u64);
+    }
+    if let Some(s_str) = s.strip_suffix('s') {
+        return s_str.trim().parse().ok();
+    }
+    if let Some(m_str) = s.strip_suffix('m') {
+        return m_str.trim().parse::<f64>().ok().map(|n| (n * 60.0) as u64);
+    }
+    if let Some(h_str) = s.strip_suffix('h') {
+        return h_str.trim().parse::<f64>().ok().map(|n| (n * 3600.0) as u64);
+    }
+    s.parse().ok()
+}
+
+struct DurationMsVisitor;
+
+impl<'de> Visitor<'de> for DurationMsVisitor {
+    type Value = u64;
+
+    fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str("a duration string (e.g. '2s', '5m', '500ms') or an integer (milliseconds)")
+    }
+
+    fn visit_u64<E: de::Error>(self, v: u64) -> Result<u64, E> { Ok(v) }
+    fn visit_i64<E: de::Error>(self, v: i64) -> Result<u64, E> { Ok(v.max(0) as u64) }
+    fn visit_str<E: de::Error>(self, v: &str) -> Result<u64, E> {
+        parse_duration_to_ms(v).ok_or_else(|| E::custom(format!("invalid duration: '{v}'")))
+    }
+}
+
+fn deserialize_duration_ms<'de, D>(d: D) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    d.deserialize_any(DurationMsVisitor)
+}
+
+struct DurationSVisitor;
+
+impl<'de> Visitor<'de> for DurationSVisitor {
+    type Value = u64;
+
+    fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str("a duration string (e.g. '2s', '5m', '1h') or an integer (seconds)")
+    }
+
+    fn visit_u64<E: de::Error>(self, v: u64) -> Result<u64, E> { Ok(v) }
+    fn visit_i64<E: de::Error>(self, v: i64) -> Result<u64, E> { Ok(v.max(0) as u64) }
+    fn visit_str<E: de::Error>(self, v: &str) -> Result<u64, E> {
+        parse_duration_to_s(v).ok_or_else(|| E::custom(format!("invalid duration: '{v}'")))
+    }
+}
+
+fn deserialize_duration_s<'de, D>(d: D) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    d.deserialize_any(DurationSVisitor)
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct GlobalConfig {
-    #[serde(default = "default_file_check_interval")]
+    #[serde(default = "default_file_check_interval", alias = "file_check_interval", deserialize_with = "deserialize_duration_ms")]
     pub file_check_interval_ms: u64,
 
-    #[serde(default = "default_stable_time")]
+    #[serde(default = "default_stable_time", alias = "stable_time", deserialize_with = "deserialize_duration_ms")]
     pub stable_time_ms: u64,
 
     #[serde(default = "default_ffmpeg_path")]
@@ -28,16 +114,16 @@ pub struct GlobalConfig {
     #[serde(default)]
     pub ffprobe_path: Option<String>,
 
-    #[serde(default = "default_max_concurrent")]
+    #[serde(default = "default_max_concurrent", alias = "max_concurrent")]
     pub max_concurrent_conversions: u32,
 
-    #[serde(default = "default_config_refresh")]
+    #[serde(default = "default_config_refresh", alias = "refresh_interval", deserialize_with = "deserialize_duration_s")]
     pub config_refresh_interval_s: u64,
 
     #[serde(default)]
     pub embedded_secret: String,
 
-    #[serde(default)]
+    #[serde(default, alias = "embedded_scan_interval")]
     pub embedded_scan_interval_s: u64,
 
     #[serde(default = "default_codec_presets")]
@@ -131,7 +217,7 @@ pub struct HealthcheckConfig {
 }
 
 fn default_http_port() -> u16 { 8080 }
-fn default_bind_address() -> String { "0.0.0.0".to_string() }
+fn default_bind_address() -> String { "127.0.0.1".to_string() }
 
 impl Default for HealthcheckConfig {
     fn default() -> Self {
@@ -144,7 +230,7 @@ impl Default for HealthcheckConfig {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DiskSpaceConfig {
-    #[serde(default = "default_disk_check_interval")]
+    #[serde(default = "default_disk_check_interval", alias = "check_interval", deserialize_with = "deserialize_duration_s")]
     pub check_interval_s: u64,
     #[serde(default = "default_disk_threshold")]
     pub threshold: DiskSpaceThreshold,
