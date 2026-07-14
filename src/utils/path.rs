@@ -5,12 +5,7 @@ use crate::config::global::InputFileAction;
 pub fn get_base_name(file_name: &str) -> String {
     Path::new(file_name)
         .file_stem()
-        .map(|s| {
-            let name = s.to_string_lossy().to_string();
-            // Strip path separators and ".." components to prevent traversal
-            name.replace(['/', '\\'], "_")
-                .replace("..", "_")
-        })
+        .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| file_name.to_string())
 }
 
