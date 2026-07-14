@@ -191,6 +191,15 @@ pub async fn run_embedded_scanner(
         return;
     }
 
+    if secret.is_empty() {
+        warn!(
+            "SECURITY: embedded_secret is empty — override configs in '{}' \
+             are accepted without secret validation. Set embedded_secret \
+             in your config to restrict override access.",
+            watchs_dir
+        );
+    }
+
     let _ = std::fs::create_dir_all(&watchs_dir);
 
     let interval = tokio::time::Duration::from_secs(scan_interval_secs);

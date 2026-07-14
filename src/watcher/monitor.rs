@@ -240,7 +240,13 @@ fn validate_and_promote_config(
         }
     };
 
-    if !global.embedded_secret.is_empty() && embedded.secret != global.embedded_secret {
+    if global.embedded_secret.is_empty() {
+        warn!(
+            "SECURITY: accepting override {:?} without secret validation \
+             (embedded_secret is empty)",
+            config_path
+        );
+    } else if embedded.secret != global.embedded_secret {
         warn!("Secret mismatch in {:?}", config_path);
         create_invalid_marker(config_path, manifest);
         return;
