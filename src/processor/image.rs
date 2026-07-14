@@ -51,6 +51,8 @@ pub async fn process_image(
     };
 
     let input_path = file_path.clone();
+    let output_path_clone = output_path.clone();
+    let rule_clone = rule.clone();
     super::runner::run_conversion(
         watcher_name,
         file_name,
@@ -60,8 +62,12 @@ pub async fn process_image(
         input_file_action,
         "image",
         || async move {
-            convert_image(&input_path, &output_path, rule)?;
-            Ok(output_path.to_string_lossy().to_string())
+            tokio::task::spawn_blocking(move || {
+                convert_image(&input_path, &output_path_clone, &rule_clone)?;
+                Ok(output_path_clone.to_string_lossy().to_string())
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("Image conversion task panicked: {}", e))?
         },
     )
     .await;

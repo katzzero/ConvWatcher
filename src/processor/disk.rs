@@ -18,7 +18,7 @@ pub async fn check_disk_space(
 
         if config.check_output {
             if let Some(parent) = get_mount_point(output_folder) {
-                if let Err(e) = check_available(&parent, &config.threshold, "output") {
+                if let Err(e) = check_available(&parent, &config.threshold, "output").await {
                     warn!("Disk space low (output): {}", e);
                     low = true;
                 }
@@ -27,7 +27,7 @@ pub async fn check_disk_space(
 
         if config.check_watch {
             if let Some(parent) = get_mount_point(watch_folder) {
-                if let Err(e) = check_available(&parent, &config.threshold, "watch") {
+                if let Err(e) = check_available(&parent, &config.threshold, "watch").await {
                     warn!("Disk space low (watch): {}", e);
                     low = true;
                 }
@@ -59,17 +59,16 @@ fn get_mount_point(path: &str) -> Option<std::path::PathBuf> {
 }
 
 #[cfg(unix)]
-fn check_available(
+async fn check_available(
     mount: &std::path::Path,
     threshold: &DiskSpaceThreshold,
     label: &str,
 ) -> anyhow::Result<()> {
-    use std::process::Command;
-
-    let output = match Command::new("df")
-        .arg("-k")
+    let output = match tokio::process::Command::new("df")
+        .arg("-kP")
         .arg(mount.as_os_str())
         .output()
+        .await
     {
         Ok(o) => o,
         Err(_) => return Ok(()),
