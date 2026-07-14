@@ -73,6 +73,7 @@ async fn convert_audio(input: &Path, output: &Path, rule: &AudioRule, ffmpeg_pat
     let args = build_audio_args(rule);
 
     let mut cmd = Command::new(ffmpeg_path);
+    cmd.kill_on_drop(true);
     cmd.arg("-y")
         .arg("-i")
         .arg(input.as_os_str());

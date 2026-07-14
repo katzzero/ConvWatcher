@@ -102,6 +102,7 @@ async fn execute_custom(
     let args = &argv[1..];
 
     let output_result = Command::new(program)
+        .kill_on_drop(true)
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

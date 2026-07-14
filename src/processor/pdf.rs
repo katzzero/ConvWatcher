@@ -95,6 +95,7 @@ async fn compress_pdf(input: &Path, output: &Path, quality: Option<&PdfQuality>)
     };
 
     let output_result = Command::new("gs")
+        .kill_on_drop(true)
         .args(["-sDEVICE=pdfwrite", "-dCompatibilityLevel=1.4"])
         .arg(format!("-dPDFSETTINGS={}", setting))
         .args(["-dNOPAUSE", "-dQUIET", "-dBATCH"])
@@ -121,6 +122,7 @@ async fn convert_to_pdfa(input: &Path, output: &Path, version: &Option<String>) 
     };
 
     let output_result = Command::new("gs")
+        .kill_on_drop(true)
         .args(["-sDEVICE=pdfwrite", &format!("-dPDFA={}", pdfa)])
         .args([
             "-dPDFACompatibilityPolicy=1",
@@ -144,6 +146,7 @@ async fn convert_to_pdfa(input: &Path, output: &Path, version: &Option<String>) 
 
 async fn extract_text(input: &Path, output: &Path) -> Result<()> {
     let output_result = Command::new("pdftotext")
+        .kill_on_drop(true)
         .arg(input.as_os_str())
         .arg(output.as_os_str())
         .stdout(Stdio::piped())
@@ -163,6 +166,7 @@ async fn extract_images(input: &Path, output: &Path, resolution: Option<u32>) ->
     let prefix = output.with_extension("");
 
     let output_result = Command::new("pdfimages")
+        .kill_on_drop(true)
         .arg("-png")
         .arg("-r")
         .arg(dpi.to_string())
@@ -182,6 +186,7 @@ async fn extract_images(input: &Path, output: &Path, resolution: Option<u32>) ->
 
 async fn images_to_pdf(input: &Path, output: &Path) -> Result<()> {
     let output_result = Command::new("img2pdf")
+        .kill_on_drop(true)
         .arg(input.as_os_str())
         .arg("-o")
         .arg(output.as_os_str())
@@ -199,6 +204,7 @@ async fn images_to_pdf(input: &Path, output: &Path) -> Result<()> {
 
 async fn linearize_pdf(input: &Path, output: &Path) -> Result<()> {
     let output_result = Command::new("qpdf")
+        .kill_on_drop(true)
         .arg("--linearize")
         .arg(input.as_os_str())
         .arg(output.as_os_str())
@@ -218,6 +224,7 @@ async fn encrypt_pdf(input: &Path, output: &Path, password: &Option<String>) -> 
     let pw = password.as_deref().unwrap_or("default");
 
     let output_result = Command::new("qpdf")
+        .kill_on_drop(true)
         .arg("--encrypt")
         .arg(pw)
         .arg(pw)
@@ -239,6 +246,7 @@ async fn encrypt_pdf(input: &Path, output: &Path, password: &Option<String>) -> 
 
 async fn decrypt_pdf(input: &Path, output: &Path, password: &Option<String>) -> Result<()> {
     let mut cmd = Command::new("qpdf");
+    cmd.kill_on_drop(true);
     cmd.arg("--decrypt");
     if let Some(pw) = password {
         cmd.arg(format!("--password={}", pw));
@@ -266,6 +274,7 @@ async fn pdf_to_images(input: &Path, output: &Path, resolution: Option<u32>) -> 
     let prefix = output.with_extension("");
 
     let output_result = Command::new("pdftoppm")
+        .kill_on_drop(true)
         .arg("-png")
         .arg("-r")
         .arg(dpi.to_string())
@@ -285,6 +294,7 @@ async fn pdf_to_images(input: &Path, output: &Path, resolution: Option<u32>) -> 
 
 async fn analyze_pdf(input: &Path, _output: &Path) -> Result<()> {
     let output_result = Command::new("pdfinfo")
+        .kill_on_drop(true)
         .arg(input.as_os_str())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

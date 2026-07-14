@@ -78,6 +78,7 @@ async fn convert_video(input: &Path, output: &Path, rule: &VideoRule, ffmpeg_pat
     let (hwaccel_pre, hwaccel_post) = build_hwaccel_args(codec);
 
     let mut cmd = Command::new(ffmpeg_path);
+    cmd.kill_on_drop(true);
     cmd.arg("-y");
 
     for arg in &hwaccel_pre {
@@ -216,6 +217,7 @@ fn build_hwaccel_args(codec: &str) -> (Vec<String>, Vec<String>) {
 
 pub async fn get_video_duration(path: &Path, ffprobe_path: &str) -> Result<f64> {
     let output = Command::new(ffprobe_path)
+        .kill_on_drop(true)
         .args([
             "-v",
             "error",

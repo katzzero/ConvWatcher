@@ -72,6 +72,7 @@ pub async fn process_document(
 
 async fn convert_document(input: &Path, output: &Path, rule: &DocumentRule) -> Result<()> {
     let mut cmd = Command::new("pandoc");
+    cmd.kill_on_drop(true);
 
     cmd.arg(input.as_os_str());
     cmd.arg("-o");
