@@ -120,6 +120,12 @@ th { color: var(--text-dim); font-weight: 500; }
 <script>
 const BASE = '';
 
+function escapeHtml(s) {
+  if (typeof s !== 'string') s = String(s ?? '');
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;').replace(/'/g, '&#x27;');
+}
+
 function toggleTheme() {
   document.body.classList.toggle('light');
   const isLight = document.body.classList.contains('light');
@@ -165,15 +171,15 @@ async function refresh() {
 
   const watcherHtml = (Array.isArray(watchers) ? watchers : []).map(w => `
     <div class="card">
-      <div class="title">${w.watch_folder}</div>
-      <div class="detail">Output: ${w.output_folder}</div>
+      <div class="title">${escapeHtml(w.watch_folder)}</div>
+      <div class="detail">Output: ${escapeHtml(w.output_folder)}</div>
       <div class="rules">
-        ${(w.video_rules || []).length > 0 ? '<span>Video: ' + w.video_rules.join(', ') + '</span>' : ''}
-        ${(w.audio_rules || []).length > 0 ? '<span>Audio: ' + w.audio_rules.join(', ') + '</span>' : ''}
-        ${(w.image_rules || []).length > 0 ? '<span>Image: ' + w.image_rules.join(', ') + '</span>' : ''}
-        ${(w.pdf_rules || []).length > 0 ? '<span>PDF: ' + w.pdf_rules.join(', ') + '</span>' : ''}
-        ${(w.document_rules || []).length > 0 ? '<span>Doc: ' + w.document_rules.join(', ') + '</span>' : ''}
-        ${(w.custom_rules || []).length > 0 ? '<span>Custom: ' + w.custom_rules.join(', ') + '</span>' : ''}
+        ${(w.video_rules || []).length > 0 ? '<span>Video: ' + escapeHtml(w.video_rules.join(', ')) + '</span>' : ''}
+        ${(w.audio_rules || []).length > 0 ? '<span>Audio: ' + escapeHtml(w.audio_rules.join(', ')) + '</span>' : ''}
+        ${(w.image_rules || []).length > 0 ? '<span>Image: ' + escapeHtml(w.image_rules.join(', ')) + '</span>' : ''}
+        ${(w.pdf_rules || []).length > 0 ? '<span>PDF: ' + escapeHtml(w.pdf_rules.join(', ')) + '</span>' : ''}
+        ${(w.document_rules || []).length > 0 ? '<span>Doc: ' + escapeHtml(w.document_rules.join(', ')) + '</span>' : ''}
+        ${(w.custom_rules || []).length > 0 ? '<span>Custom: ' + escapeHtml(w.custom_rules.join(', ')) + '</span>' : ''}
       </div>
     </div>
   `).join('');
@@ -183,7 +189,7 @@ async function refresh() {
   const queue = qp.queue || {};
   let queueHtml = '';
   if (Object.keys(processing).length > 0) {
-    queueHtml += '<p>Processing: ' + Object.entries(processing).map(([k,v]) => k + ': ' + v).join(', ') + '</p>';
+    queueHtml += '<p>Processing: ' + Object.entries(processing).map(([k,v]) => escapeHtml(k) + ': ' + escapeHtml(v)).join(', ') + '</p>';
   }
   if (Object.keys(queue).length > 0) {
     queueHtml += '<p>Queue items: ' + Object.values(queue).reduce((a,b) => a + b.length, 0) + '</p>';
@@ -193,11 +199,11 @@ async function refresh() {
   const historyArr = Array.isArray(history) ? history : [];
   document.getElementById('history').innerHTML = historyArr.slice(-50).reverse().map(h => `
     <tr>
-      <td>${h.time}</td>
-      <td>${h.watcher}</td>
-      <td>${h.file}</td>
-      <td class="status-${h.status}">${h.status}</td>
-      <td>${h.output || '—'}</td>
+      <td>${escapeHtml(h.time)}</td>
+      <td>${escapeHtml(h.watcher)}</td>
+      <td>${escapeHtml(h.file)}</td>
+      <td class="status-${escapeHtml(h.status)}">${escapeHtml(h.status)}</td>
+      <td>${escapeHtml(h.output || '—')}</td>
     </tr>
   `).join('');
 
