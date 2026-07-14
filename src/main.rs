@@ -193,9 +193,11 @@ async fn run() -> Result<()> {
     };
 
     let (reload_tx, reload_rx) = mpsc::channel::<Vec<WatchConfig>>(10);
+    let (config_tx, config_rx) = mpsc::channel::<Vec<WatchConfig>>(10);
 
     let cfg_path_for_reloader = cli.config.clone();
     let reload_tx_clone = reload_tx.clone();
+    let config_tx_clone = config_tx.clone();
     let initial_config_sig =
         serde_yaml::to_string(&(&global_for_reloader, &watch_configs)).ok();
 
@@ -221,7 +223,8 @@ async fn run() -> Result<()> {
                         };
                         if last_sig.as_deref() != Some(sig.as_str()) {
                             last_sig = Some(sig);
-                            let _ = reload_tx_clone.send(new_configs).await;
+                            let _ = reload_tx_clone.send(new_configs.clone()).await;
+                            let _ = config_tx_clone.send(new_configs).await;
                         } else {
                             info!("No config changes detected");
                         }
@@ -246,6 +249,7 @@ async fn run() -> Result<()> {
                 scan_interval,
                 reload_tx,
                 main_configs,
+                config_rx,
             )
             .await;
         })

@@ -15,6 +15,7 @@ pub struct EmbeddedScanner {
     known_configs: HashMap<PathBuf, (WatchConfig, SystemTime)>,
     reload_tx: mpsc::Sender<Vec<WatchConfig>>,
     main_configs: Vec<WatchConfig>,
+    config_rx: mpsc::Receiver<Vec<WatchConfig>>,
 }
 
 impl EmbeddedScanner {
@@ -23,6 +24,7 @@ impl EmbeddedScanner {
         secret: String,
         reload_tx: mpsc::Sender<Vec<WatchConfig>>,
         main_configs: Vec<WatchConfig>,
+        config_rx: mpsc::Receiver<Vec<WatchConfig>>,
     ) -> Self {
         Self {
             watchs_dir,
@@ -30,10 +32,19 @@ impl EmbeddedScanner {
             known_configs: HashMap::new(),
             reload_tx,
             main_configs,
+            config_rx,
         }
     }
 
     pub async fn scan(&mut self) -> anyhow::Result<()> {
+        // Check for updated main configs from the hot-reloader
+        while let Ok(new_configs) = self.config_rx.try_recv() {
+            info!("Embedded scanner: received {} updated main config(s)", new_configs.len());
+            self.main_configs = new_configs;
+            // Clear known configs so they get re-merged with fresh main configs
+            self.known_configs.clear();
+        }
+
         if !self.watchs_dir.exists() {
             return Ok(());
         }
@@ -189,6 +200,7 @@ pub async fn run_embedded_scanner(
     scan_interval_secs: u64,
     reload_tx: mpsc::Sender<Vec<WatchConfig>>,
     main_configs: Vec<WatchConfig>,
+    config_rx: mpsc::Receiver<Vec<WatchConfig>>,
 ) {
     if scan_interval_secs == 0 {
         info!("Watch config scanning is disabled");
@@ -212,6 +224,7 @@ pub async fn run_embedded_scanner(
         secret,
         reload_tx.clone(),
         main_configs,
+        config_rx,
     );
 
     loop {
