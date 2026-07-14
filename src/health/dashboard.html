@@ -160,13 +160,13 @@ async function refresh() {
   const logs = await fetchText('/logs');
 
   document.getElementById('stats').innerHTML = `
-    <div class="stat-card"><div class="label">Status</div><div class="value ok">${health.status || 'ok'}</div></div>
-    <div class="stat-card"><div class="label">Uptime</div><div class="value">${health.uptime || '—'}</div></div>
-    <div class="stat-card"><div class="label">Watchers</div><div class="value">${health.watchers || 0}</div></div>
-    <div class="stat-card"><div class="label">Queue</div><div class="value">${health.queue || 0}</div></div>
-    <div class="stat-card"><div class="label">Processing</div><div class="value">${health.processing || 0}</div></div>
-    <div class="stat-card"><div class="label">Processed</div><div class="value ok">${health.processed || 0}</div></div>
-    <div class="stat-card"><div class="label">Errors</div><div class="value ${(health.errors || 0) > 0 ? 'err' : ''}">${health.errors || 0}</div></div>
+    <div class="stat-card"><div class="label">Status</div><div class="value ok">${escapeHtml(health.status || 'ok')}</div></div>
+    <div class="stat-card"><div class="label">Uptime</div><div class="value">${escapeHtml(health.uptime || '—')}</div></div>
+    <div class="stat-card"><div class="label">Watchers</div><div class="value">${escapeHtml(health.watchers || 0)}</div></div>
+    <div class="stat-card"><div class="label">Queue</div><div class="value">${escapeHtml(health.queue || 0)}</div></div>
+    <div class="stat-card"><div class="label">Processing</div><div class="value">${escapeHtml(health.processing || 0)}</div></div>
+    <div class="stat-card"><div class="label">Processed</div><div class="value ok">${escapeHtml(health.processed || 0)}</div></div>
+    <div class="stat-card"><div class="label">Errors</div><div class="value ${(health.errors || 0) > 0 ? 'err' : ''}">${escapeHtml(health.errors || 0)}</div></div>
   `;
 
   const watcherHtml = (Array.isArray(watchers) ? watchers : []).map(w => `
