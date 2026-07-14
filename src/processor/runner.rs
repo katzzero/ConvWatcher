@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -21,6 +21,7 @@ pub async fn run_conversion<F, Fut>(
     watcher_name: String,
     file_name: String,
     file_path: PathBuf,
+    output_path: &Path,
     error_logger: Arc<ErrorLogger>,
     health_server: Arc<HealthServer>,
     input_file_action: InputFileAction,
@@ -41,6 +42,7 @@ pub async fn run_conversion<F, Fut>(
             let msg = format!("{} conversion timed out after {}s: {}", op_label, DEFAULT_TIMEOUT_S, file_name);
             error!("{}", msg);
             error_logger.log(&msg, &file_name, op_label);
+            cleanup_partial_output(output_path);
             let _ = health_server.increment_error(&watcher_name);
             let _ = health_server.add_history(ConversionRecord {
                 time: chrono::Local::now().format("%H:%M:%S").to_string(),
@@ -74,6 +76,7 @@ pub async fn run_conversion<F, Fut>(
             error!("{}", msg);
             warn!("[Processor] Error discarded, continuing: {}", file_name);
             error_logger.log(&msg, &file_name, op_label);
+            cleanup_partial_output(output_path);
             let _ = health_server.increment_error(&watcher_name);
             let _ = health_server.add_history(ConversionRecord {
                 time: chrono::Local::now().format("%H:%M:%S").to_string(),
@@ -88,4 +91,14 @@ pub async fn run_conversion<F, Fut>(
 
     info!("[Processor] Job finished: {}", file_name);
     let _ = health_server.clear_processing(&watcher_name);
+}
+
+fn cleanup_partial_output(path: &Path) {
+    if path.exists() {
+        if let Err(e) = std::fs::remove_file(path) {
+            warn!("Failed to clean up partial output {:?}: {}", path, e);
+        } else {
+            info!("Cleaned up partial output: {:?}", path);
+        }
+    }
 }

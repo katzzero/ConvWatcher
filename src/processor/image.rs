@@ -57,6 +57,7 @@ pub async fn process_image(
         watcher_name,
         file_name,
         file_path,
+        &output_path,
         error_logger,
         health_server,
         input_file_action,

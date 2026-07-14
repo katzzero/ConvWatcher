@@ -53,10 +53,12 @@ pub async fn process_external(
 
     let input_path = file_path.clone();
     let fname = file_name.clone();
+    let output_path_for_cleanup = output_path.clone();
     super::runner::run_conversion(
         watcher_name,
         file_name,
         file_path,
+        &output_path_for_cleanup,
         error_logger,
         health_server,
         input_file_action,
