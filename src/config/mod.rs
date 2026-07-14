@@ -66,6 +66,7 @@ pub fn load_config(custom_path: Option<&Path>) -> Result<(GlobalConfig, Vec<Watc
         &config_dir.join(&global.codec_presets.image),
         &config_dir.join(&global.codec_presets.pdf),
         &config_dir.join(&global.codec_presets.document),
+        &config_dir.join(&global.codec_presets.custom),
     ].iter().all(|p| p.exists());
 
     if !presets_ok {
@@ -562,6 +563,14 @@ fn generate_preset_files(config_dir: &Path) -> Result<()> {
         fs::write(&doc_path, DEFAULT_DOCUMENT_PRESETS)
             .with_context(|| format!("Cannot write {}", doc_path.display()))?;
         info!("Created default document presets: {}", doc_path.display());
+    }
+
+    // Generate custom_presets.yaml
+    let custom_path = config_dir.join("custom_presets.yaml");
+    if !custom_path.exists() {
+        fs::write(&custom_path, DEFAULT_CUSTOM_PRESETS)
+            .with_context(|| format!("Cannot write {}", custom_path.display()))?;
+        info!("Created default custom presets: {}", custom_path.display());
     }
 
     Ok(())
@@ -1151,6 +1160,27 @@ presets:
   html_to_docx:
     output_ext: .docx
     description: "HTML to DOCX"
+"#;
+
+const DEFAULT_CUSTOM_PRESETS: &str = r#"# Custom command presets — reference by name in watcher rules.
+# Define arbitrary CLI commands for file conversion.
+# Placeholders: {input}, {output}, {basename}, {ext}, {output_folder}
+
+presets:
+  handbrake:
+    command: "HandBrakeCLI -i {input} -o {output} --preset 'Fast 1080p30'"
+    output_ext: .mp4
+    description: "HandBrake CLI — Fast 1080p30 preset"
+
+  imagemagick:
+    command: "convert {input} {output}"
+    output_ext: .png
+    description: "ImageMagick convert"
+
+  ghostscript_compress:
+    command: "gs -sDEVICE=pdfwrite -dCompatibilityLevel=1.4 -dPDFSETTINGS=/ebook -o {output} {input}"
+    output_ext: .pdf
+    description: "Ghostscript PDF compression (ebook quality)"
 "#;
 
 #[cfg(test)]
