@@ -248,7 +248,7 @@ fn generate_default_config(config_path: &Path) -> Result<(GlobalConfig, Vec<Watc
     let default_watchers = vec![WatchConfig {
         name: "default".to_string(),
         watch_folder: inputs_base.join("default").to_string_lossy().to_string() + "/",
-        output_folder: outputs_base.join("default-output").to_string_lossy().to_string() + "/",
+        output_folder: outputs_base.join("default").to_string_lossy().to_string() + "/",
         subfolders: vec![
             watch::Subfolder {
                 name: "gpu".to_string(),
@@ -446,7 +446,7 @@ watchers:
 
     # Caminho absoluto onde os arquivos convertidos serão salvos.
     # Obrigatório. Deve ser um path absoluto.
-    output_folder: {outputs}/default-output/
+    output_folder: {outputs}/default/
 
     # Tipo de conversão: video | image | audio | pdf | document | custom
     # Determina qual processador manipula os arquivos.

@@ -6,3 +6,6 @@
 # Internal docs
 _progress/
 *.invalid
+
+# Local agent guidance (not tracked in repo)
+AGENTS.md
