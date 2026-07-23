@@ -9,3 +9,6 @@ _progress/
 
 # Local agent guidance (not tracked in repo)
 AGENTS.md
+
+# Local-only test assets — never committed
+/test-sample/

@@ -67,11 +67,7 @@ pub async fn check_hardware_accel(ffmpeg_path: &str) -> HardwareAccelInfo {
         if let Ok(entries) = std::fs::read_dir("/dev/dri") {
             info.vaapi_devices = entries
                 .filter_map(|e| e.ok())
-                .filter_map(|e| {
-                    e.file_name()
-                        .to_str()
-                        .map(|s| format!("/dev/dri/{}", s))
-                })
+                .filter_map(|e| e.file_name().to_str().map(|s| format!("/dev/dri/{}", s)))
                 .collect();
             info.vaapi_available = !info.vaapi_devices.is_empty();
         }

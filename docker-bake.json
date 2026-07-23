@@ -1,7 +1,7 @@
 {
   "group": {
     "default": {
-      "targets": ["convwatcher"]
+      "targets": ["convwatcher", "convwatcher-server", "convwatcher-agent"]
     }
   },
   "target": {
@@ -12,6 +12,24 @@
       "tags": [
         "ghcr.io/katzzero/convwatcher:latest",
         "katzzero/convwatcher:latest"
+      ]
+    },
+    "convwatcher-server": {
+      "context": ".",
+      "dockerfile": "Dockerfile.server",
+      "platforms": ["linux/amd64", "linux/arm64"],
+      "tags": [
+        "ghcr.io/katzzero/convwatcher-server:latest",
+        "katzzero/convwatcher-server:latest"
+      ]
+    },
+    "convwatcher-agent": {
+      "context": ".",
+      "dockerfile": "Dockerfile.agent",
+      "platforms": ["linux/amd64", "linux/arm64"],
+      "tags": [
+        "ghcr.io/katzzero/convwatcher-agent:latest",
+        "katzzero/convwatcher-agent:latest"
       ]
     }
   }

@@ -1,11 +1,3 @@
-mod cli;
-mod config;
-mod health;
-mod logs;
-mod processor;
-mod utils;
-mod watcher;
-
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -14,13 +6,18 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use clap::Parser;
 use log::{error, info, warn};
+use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::{broadcast, mpsc, Mutex as TokioMutex, Semaphore};
 
-use cli::Cli;
-use config::watch::WatchConfig;
-use logs::error_logger::ErrorLogger;
-use processor::job::ConversionJob;
-use utils::hardware::check_hardware_accel;
+use convwatcher::cli::Cli;
+use convwatcher::config;
+use convwatcher::config::watch::WatchConfig;
+use convwatcher::health;
+use convwatcher::logs::error_logger::ErrorLogger;
+use convwatcher::processor;
+use convwatcher::processor::job::ConversionJob;
+use convwatcher::utils::hardware::check_hardware_accel;
+use convwatcher::watcher;
 
 #[tokio::main]
 async fn main() {
@@ -57,7 +54,13 @@ async fn run() -> Result<()> {
                 rules: vec![config::watch::VideoRule {
                     preset: "h264_cpu".to_string(),
                     subfolder: None,
-                    input_extensions: vec![".mp4".into(), ".avi".into(), ".mkv".into(), ".mov".into(), ".mxf".into()],
+                    input_extensions: vec![
+                        ".mp4".into(),
+                        ".avi".into(),
+                        ".mkv".into(),
+                        ".mov".into(),
+                        ".mxf".into(),
+                    ],
                     output_ext: None,
                     codec: None,
                     quality: None,
@@ -83,7 +86,10 @@ async fn run() -> Result<()> {
     let hw_info = Arc::new(check_hardware_accel(&global_config.ffmpeg_path).await);
     info!(
         "Hardware acceleration: VAAPI={}, NVENC={}, QSV={}, RKMPP={}",
-        hw_info.vaapi_available, hw_info.nvenc_available, hw_info.qsv_available, hw_info.rkmpp_available
+        hw_info.vaapi_available,
+        hw_info.nvenc_available,
+        hw_info.qsv_available,
+        hw_info.rkmpp_available
     );
 
     let health_server = Arc::new(
@@ -97,7 +103,8 @@ async fn run() -> Result<()> {
         .with_history_persistence(
             &global_config.history.file,
             global_config.history.persistent,
-        ),
+        )
+        .with_app_log("logs/convwatcher.log".to_string()),
     );
 
     for cfg in &watch_configs {
@@ -120,7 +127,8 @@ async fn run() -> Result<()> {
         global_config.max_concurrent_conversions as usize,
     ));
 
-    let processing_files: Arc<TokioMutex<HashSet<PathBuf>>> = Arc::new(TokioMutex::new(HashSet::new()));
+    let processing_files: Arc<TokioMutex<HashSet<PathBuf>>> =
+        Arc::new(TokioMutex::new(HashSet::new()));
 
     let (shutdown_tx, _) = broadcast::channel::<()>(1);
 
@@ -161,22 +169,43 @@ async fn run() -> Result<()> {
 
     let global_for_reloader = global_config.clone();
     let disk_config_clone = global_config.disk_space.clone();
-    let output_folders: Vec<String> =
-        watch_configs.iter().map(|c| c.output_folder.clone()).collect();
-    let watch_folders: Vec<String> =
-        watch_configs.iter().map(|c| c.watch_folder.clone()).collect();
+    let output_folders: Vec<String> = watch_configs
+        .iter()
+        .map(|c| c.output_folder.clone())
+        .collect();
+    let watch_folders: Vec<String> = watch_configs
+        .iter()
+        .map(|c| c.watch_folder.clone())
+        .collect();
 
     let worker_handle = {
         let health = health_server.clone();
         let err_logger = error_logger.clone();
         let sem = semaphore.clone();
         let ffmpeg = global_config.ffmpeg_path.clone();
-        let ffprobe = global_config.ffprobe_path.clone()
-            .unwrap_or_else(|| global_config.ffmpeg_path.clone());
+        let ffprobe = global_config
+            .ffprobe_path
+            .clone()
+            .unwrap_or_else(|| {
+                std::path::Path::new(&global_config.ffmpeg_path)
+                    .parent()
+                    .map(|p| p.join("ffprobe").to_string_lossy().to_string())
+                    .unwrap_or_else(|| "/usr/bin/ffprobe".to_string())
+            });
         let pf = processing_files.clone();
 
         tokio::spawn(async move {
-            process_jobs(job_rx, health, err_logger, disk_config_clone, sem, ffmpeg, ffprobe, pf).await;
+            process_jobs(
+                job_rx,
+                health,
+                err_logger,
+                disk_config_clone,
+                sem,
+                ffmpeg,
+                ffprobe,
+                pf,
+            )
+            .await;
         })
     };
 
@@ -198,13 +227,11 @@ async fn run() -> Result<()> {
     let cfg_path_for_reloader = cli.config.clone();
     let reload_tx_clone = reload_tx.clone();
     let config_tx_clone = config_tx.clone();
-    let initial_config_sig =
-        serde_yaml::to_string(&(&global_for_reloader, &watch_configs)).ok();
+    let initial_config_sig = serde_yaml::to_string(&(&global_for_reloader, &watch_configs)).ok();
 
     let config_reload_handle = {
         tokio::spawn(async move {
-            let interval =
-                Duration::from_secs(global_for_reloader.config_refresh_interval_s);
+            let interval = Duration::from_secs(global_for_reloader.config_refresh_interval_s);
 
             let mut last_sig = initial_config_sig;
 
@@ -257,7 +284,7 @@ async fn run() -> Result<()> {
 
     info!("ConvWatcher running. Press Ctrl+C to stop.");
 
-    let mgmt_handle = {
+    let mut mgmt_handle = {
         let health = health_server.clone();
         let tx = job_tx.clone();
         let gc = global_config.clone();
@@ -267,11 +294,16 @@ async fn run() -> Result<()> {
         })
     };
 
+    let mut term_signal = signal(SignalKind::terminate())?;
+    let mut int_signal = signal(SignalKind::interrupt())?;
     tokio::select! {
-        _ = tokio::signal::ctrl_c() => {
-            info!("Shutdown signal received");
+        _ = term_signal.recv() => {
+            info!("SIGTERM received, shutting down");
         }
-        _ = mgmt_handle => {
+        _ = int_signal.recv() => {
+            info!("SIGINT received, shutting down");
+        }
+        _ = &mut mgmt_handle => {
             info!("Monitor manager exited");
         }
     }
@@ -283,6 +315,10 @@ async fn run() -> Result<()> {
         let _ = handle.await;
     }
 
+    drop(reload_tx);
+    let _ = mgmt_handle.await;
+
+    health_server.stop();
     health_handle.abort();
     worker_handle.abort();
     disk_handle.abort();
@@ -327,11 +363,7 @@ fn setup_logging(cli: &Cli) -> Result<()> {
                 .filter(|meta| meta.level() <= log::Level::Warn)
                 .chain(std::io::stderr()),
         );
-        dispatch = dispatch.chain(
-            fern::Dispatch::new()
-                .level(level)
-                .chain(std::io::stdout()),
-        );
+        dispatch = dispatch.chain(fern::Dispatch::new().level(level).chain(std::io::stdout()));
         if let Ok(log_file) = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -349,12 +381,14 @@ async fn process_jobs(
     mut job_rx: mpsc::Receiver<ConversionJob>,
     health_server: Arc<health::server::HealthServer>,
     error_logger: Arc<ErrorLogger>,
-    disk_config: crate::config::global::DiskSpaceConfig,
+    disk_config: convwatcher::config::global::DiskSpaceConfig,
     semaphore: Arc<Semaphore>,
     ffmpeg_path: String,
     ffprobe_path: String,
     processing_files: Arc<TokioMutex<HashSet<PathBuf>>>,
 ) {
+    let mut handles = Vec::new();
+
     while let Some(job) = job_rx.recv().await {
         let hs = health_server.clone();
         let el = error_logger.clone();
@@ -365,120 +399,41 @@ async fn process_jobs(
         let pf = processing_files.clone();
         let file_path = job.file_path.clone();
 
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             let _permit = sem.acquire().await;
-            let action = job.input_file_action.clone();
-            match job.matched_rule {
-                processor::job::MatchedRule::Video(ref rule) => {
-                    processor::video::process_video(
-                        job.watcher_name.clone(),
-                        job.file_name.clone(),
-                        job.file_path.clone(),
-                        rule,
-                        &job.output_folder,
-                        &job.watch_folder,
-                        el.clone(),
-                        hs.clone(),
-                        &dc,
-                        &ffmpeg,
-                        &ffprobe,
-                        action,
-                    )
-                    .await;
-                }
-                processor::job::MatchedRule::Image(ref rule) => {
-                    processor::image::process_image(
-                        job.watcher_name.clone(),
-                        job.file_name.clone(),
-                        job.file_path.clone(),
-                        rule,
-                        &job.output_folder,
-                        &job.watch_folder,
-                        el.clone(),
-                        hs.clone(),
-                        &dc,
-                        action,
-                    )
-                    .await;
-                }
-                processor::job::MatchedRule::Audio(ref rule) => {
-                    processor::audio::process_audio(
-                        job.watcher_name.clone(),
-                        job.file_name.clone(),
-                        job.file_path.clone(),
-                        rule,
-                        &job.output_folder,
-                        &job.watch_folder,
-                        el.clone(),
-                        hs.clone(),
-                        &dc,
-                        &ffmpeg,
-                        action,
-                    )
-                    .await;
-                }
-                processor::job::MatchedRule::Pdf(ref rule) => {
-                    processor::pdf::process_pdf(
-                        job.watcher_name.clone(),
-                        job.file_name.clone(),
-                        job.file_path.clone(),
-                        rule,
-                        &job.output_folder,
-                        &job.watch_folder,
-                        el.clone(),
-                        hs.clone(),
-                        &dc,
-                        action,
-                    )
-                    .await;
-                }
-                processor::job::MatchedRule::Document(ref rule) => {
-                    processor::document::process_document(
-                        job.watcher_name.clone(),
-                        job.file_name.clone(),
-                        job.file_path.clone(),
-                        rule,
-                        &job.output_folder,
-                        &job.watch_folder,
-                        el.clone(),
-                        hs.clone(),
-                        &dc,
-                        action,
-                    )
-                    .await;
-                }
-                processor::job::MatchedRule::Custom(ref rule) => {
-                    processor::external::process_external(
-                        job.watcher_name.clone(),
-                        job.file_name.clone(),
-                        job.file_path.clone(),
-                        rule,
-                        &job.output_folder,
-                        &job.watch_folder,
-                        el.clone(),
-                        hs.clone(),
-                        &dc,
-                        action,
-                    )
-                    .await;
-                }
-            }
+            processor::process_one(job, hs, el, dc, ffmpeg, ffprobe).await;
             pf.lock().await.remove(&file_path);
         });
+        handles.push(handle);
     }
 
-    info!("Job processor shutting down");
+    info!(
+        "Job processor shutting down, draining {} in-flight jobs",
+        handles.len()
+    );
+
+    for handle in handles {
+        tokio::select! {
+            _ = handle => {},
+            _ = tokio::time::sleep(Duration::from_secs(30)) => {
+                info!("Job drain timeout reached, dropping remaining handles");
+                break;
+            }
+        }
+    }
+
+    info!("Job processor shut down complete");
 }
 
 async fn monitor_manager(
     mut reload_rx: mpsc::Receiver<Vec<WatchConfig>>,
     job_tx: mpsc::Sender<ConversionJob>,
     health_server: Arc<health::server::HealthServer>,
-    global_config: &crate::config::global::GlobalConfig,
+    global_config: &convwatcher::config::global::GlobalConfig,
     processing_files: Arc<TokioMutex<HashSet<PathBuf>>>,
 ) {
-    let (shutdown_tx, _) = broadcast::channel::<()>(1);
     let mut current_handles: Vec<tokio::task::JoinHandle<()>> = Vec::new();
+    let (shutdown_tx, _) = broadcast::channel::<()>(1);
 
     while let Some(new_configs) = reload_rx.recv().await {
         let _ = shutdown_tx.send(());
@@ -494,7 +449,7 @@ async fn monitor_manager(
             health_server.add_watcher_with_config(cfg).await;
         }
 
-        let (new_shutdown_tx, _) = broadcast::channel::<()>(1);
+        let (shutdown_tx, _) = broadcast::channel::<()>(1);
         let check_interval = Duration::from_millis(global_config.file_check_interval_ms);
         let stable_time = Duration::from_millis(global_config.stable_time_ms);
 
@@ -502,7 +457,7 @@ async fn monitor_manager(
             let tx = job_tx.clone();
             let name = format!("watcher_{}", cfg.name);
             let hs = health_server.clone();
-            let shutdown_rx = new_shutdown_tx.subscribe();
+            let shutdown_rx = shutdown_tx.subscribe();
             let cfg_clone = cfg.clone();
             let watch_folder = cfg_clone.watch_folder.clone();
             let gc = global_config.clone();

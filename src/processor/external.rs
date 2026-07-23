@@ -37,7 +37,11 @@ pub async fn process_external(
 
     let output_folder_path = PathBuf::from(output_folder);
     let base_name = get_base_name(&file_name);
-    let ext = rule.output_ext.as_deref().unwrap_or(".mp4").trim_start_matches('.');
+    let ext = rule
+        .output_ext
+        .as_deref()
+        .unwrap_or(".mp4")
+        .trim_start_matches('.');
     let output_path = match OutputNamer::generate_path(
         &output_folder_path,
         &base_name,
@@ -78,12 +82,18 @@ async fn execute_custom(
     file_name: &str,
     rule: &CustomRule,
 ) -> Result<()> {
-    let command = rule.command.as_deref()
+    let command = rule
+        .command
+        .as_deref()
         .ok_or_else(|| anyhow::anyhow!("Custom rule has no command"))?;
     validate_command_template(command)?;
 
     let basename = get_base_name(file_name);
-    let ext = rule.output_ext.as_deref().unwrap_or(".mp4").trim_start_matches('.');
+    let ext = rule
+        .output_ext
+        .as_deref()
+        .unwrap_or(".mp4")
+        .trim_start_matches('.');
 
     let argv = build_argv(
         command,
@@ -171,7 +181,10 @@ mod tests {
             "/out/",
         )
         .unwrap();
-        assert_eq!(argv, vec!["ffmpeg", "-i", "/in/video.mp4", "/out/video_h264.mp4"]);
+        assert_eq!(
+            argv,
+            vec!["ffmpeg", "-i", "/in/video.mp4", "/out/video_h264.mp4"]
+        );
     }
 
     #[test]

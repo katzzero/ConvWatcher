@@ -12,6 +12,8 @@ WORKDIR /app
 
 COPY Cargo.toml Cargo.lock ./
 COPY src/ ./src/
+COPY convwatcher-common/ ./convwatcher-common/
+COPY convwatcher-agent/ ./convwatcher-agent/
 
 RUN if [ "$TARGETARCH" = "arm64" ]; then \
         rustup target add aarch64-unknown-linux-musl; \
@@ -24,7 +26,7 @@ RUN if [ "$TARGETARCH" = "arm64" ]; then \
     else \
         T=x86_64-unknown-linux-musl; \
     fi && \
-    cargo build --release -j${CARGO_JOBS:-$(nproc)} --target "$T" && \
+    cargo build --release -j${CARGO_JOBS:-$(nproc)} --target "$T" --bin convwatcher && \
     cp target/"$T"/release/convwatcher /convwatcher
 
 FROM ubuntu:24.04 AS ffmpeg-builder-arm64

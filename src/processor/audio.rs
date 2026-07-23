@@ -38,11 +38,17 @@ pub async fn process_audio(
 
     let output_folder_path = PathBuf::from(output_folder);
     let base_name = get_base_name(&file_name);
-    let ext = rule.output_ext.as_deref().unwrap_or(".mp3").trim_start_matches('.');
+    let ext = rule
+        .output_ext
+        .as_deref()
+        .unwrap_or(".mp3")
+        .trim_start_matches('.');
     let output_path = match OutputNamer::generate_path(
         &output_folder_path,
         &base_name,
-        rule.output_name.as_deref().unwrap_or("{base}_{codec}_{num}.{ext}"),
+        rule.output_name
+            .as_deref()
+            .unwrap_or("{base}_{codec}_{num}.{ext}"),
         rule.audio_codec.as_deref().unwrap_or("libmp3lame"),
         ext,
     ) {
@@ -69,14 +75,17 @@ pub async fn process_audio(
     .await;
 }
 
-async fn convert_audio(input: &Path, output: &Path, rule: &AudioRule, ffmpeg_path: &str) -> Result<()> {
+async fn convert_audio(
+    input: &Path,
+    output: &Path,
+    rule: &AudioRule,
+    ffmpeg_path: &str,
+) -> Result<()> {
     let args = build_audio_args(rule);
 
     let mut cmd = Command::new(ffmpeg_path);
     cmd.kill_on_drop(true);
-    cmd.arg("-y")
-        .arg("-i")
-        .arg(input.as_os_str());
+    cmd.arg("-y").arg("-i").arg(input.as_os_str());
 
     for arg in &args {
         cmd.arg(arg);

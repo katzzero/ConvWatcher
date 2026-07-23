@@ -27,29 +27,17 @@ pub struct WatchConfig {
 #[serde(rename_all = "snake_case")]
 pub enum WatchType {
     #[serde(rename = "video")]
-    Video {
-        rules: Vec<VideoRule>,
-    },
+    Video { rules: Vec<VideoRule> },
     #[serde(rename = "image")]
-    Image {
-        rules: Vec<ImageRule>,
-    },
+    Image { rules: Vec<ImageRule> },
     #[serde(rename = "audio")]
-    Audio {
-        rules: Vec<AudioRule>,
-    },
+    Audio { rules: Vec<AudioRule> },
     #[serde(rename = "pdf")]
-    Pdf {
-        rules: Vec<PdfRule>,
-    },
+    Pdf { rules: Vec<PdfRule> },
     #[serde(rename = "document")]
-    Document {
-        rules: Vec<DocumentRule>,
-    },
+    Document { rules: Vec<DocumentRule> },
     #[serde(rename = "custom")]
-    Custom {
-        rules: Vec<CustomRule>,
-    },
+    Custom { rules: Vec<CustomRule> },
 }
 
 impl WatchType {

@@ -1,10 +1,9 @@
 use std::path::PathBuf;
 
 use crate::config::global::InputFileAction;
-use crate::config::watch::{
-    AudioRule, CustomRule, DocumentRule, ImageRule, PdfRule, VideoRule,
-};
+use crate::config::watch::{AudioRule, CustomRule, DocumentRule, ImageRule, PdfRule, VideoRule};
 
+#[derive(Clone)]
 pub enum MatchedRule {
     Video(VideoRule),
     Image(ImageRule),
@@ -14,6 +13,7 @@ pub enum MatchedRule {
     Custom(CustomRule),
 }
 
+#[derive(Clone)]
 pub struct ConversionJob {
     pub watcher_name: String,
     pub file_name: String,

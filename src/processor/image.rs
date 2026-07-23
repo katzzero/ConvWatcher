@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Result;
-use image::{DynamicImage, ImageFormat};
 use image::codecs::jpeg::JpegEncoder;
+use image::{DynamicImage, ImageFormat};
 use log::warn;
 
 use crate::config::global::DiskSpaceConfig;
@@ -15,6 +15,24 @@ use crate::utils::path::get_base_name;
 
 use super::disk::check_disk_space;
 use super::namer::OutputNamer;
+
+/// Maximum input file size (in bytes) for image conversions.
+///
+/// Images above this threshold are rejected synchronously before
+/// entering `spawn_blocking`, preventing blocking-pool exhaustion
+/// from very large files (e.g. 1 GB TIFFs).
+///
+/// **Cancellation caveat:** Unlike every other processor (which uses
+/// `tokio::process::Command` with `.kill_on_drop(true)`), the image
+/// processor uses `tokio::task::spawn_blocking` because the `image`
+/// crate's open/save are synchronous. A `tokio::time::timeout` in
+/// `run_conversion` drops the outer future, but **does not abort** the
+/// blocking task — it runs to completion. If the timeout fires, the
+/// still-running task may write output after `cleanup_partial_output`
+/// has already cleared it, leaving a stale file on disk. This is an
+/// accepted limitation for image conversions given their typical speed;
+/// see `docs/review/01-processor.md §H2` for the discussion.
+const MAX_IMAGE_INPUT_BYTES: u64 = 100 * 1024 * 1024; // 100 MB
 
 pub async fn process_image(
     watcher_name: String,
@@ -36,9 +54,28 @@ pub async fn process_image(
         return;
     }
 
+    // Reject inputs that are too large for the blocking-pool path.
+    if let Ok(meta) = std::fs::metadata(&file_path) {
+        if meta.len() > MAX_IMAGE_INPUT_BYTES {
+            let msg = format!(
+                "Image input exceeds {} byte limit ({} bytes): {}",
+                MAX_IMAGE_INPUT_BYTES,
+                meta.len(),
+                file_name
+            );
+            warn!("{}", msg);
+            error_logger.log(&msg, &file_name, "image");
+            return;
+        }
+    }
+
     let output_folder_path = PathBuf::from(output_folder);
     let base_name = get_base_name(&file_name);
-    let ext = rule.output_ext.as_deref().unwrap_or(".png").trim_start_matches('.');
+    let ext = rule
+        .output_ext
+        .as_deref()
+        .unwrap_or(".png")
+        .trim_start_matches('.');
     let output_path = match OutputNamer::generate_path(
         &output_folder_path,
         &base_name,
@@ -118,4 +155,136 @@ fn save_image(img: &DynamicImage, path: &Path, format: ImageFormat, quality: u32
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::health::server::HealthServer;
+    use crate::logs::error_logger::ErrorLogger;
+
+    #[tokio::test]
+    async fn test_image_size_precheck_rejects_oversize() {
+        // Verify the MAX_IMAGE_INPUT_BYTES pre-check added for 01 §H2.
+        let tmp = std::env::temp_dir().join(format!("cw-img-test-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        let oversized = tmp.join("huge.tiff");
+
+        // Create a sparse file larger than MAX_IMAGE_INPUT_BYTES.
+        {
+            let f = std::fs::File::create(&oversized).unwrap();
+            f.set_len(101 * 1024 * 1024).unwrap();
+        }
+
+        let out_dir = tmp.join("out");
+        let _ = std::fs::create_dir_all(&out_dir);
+
+        let health = Arc::new(HealthServer::new(0, "127.0.0.1".to_string(), 100));
+        let err_log_path = tmp.join("errors.log");
+        let global_cfg = crate::config::global::GlobalConfig {
+            log: crate::config::global::LogConfig {
+                errors_file: err_log_path.to_string_lossy().to_string(),
+                max_error_log_size_mb: 50,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let error_logger = Arc::new(ErrorLogger::new(&global_cfg).unwrap());
+
+        let rule = crate::config::watch::ImageRule {
+            preset: "jpeg_80".to_string(),
+            subfolder: None,
+            input_extensions: vec![".tiff".into()],
+            output_ext: Some(".jpg".to_string()),
+            quality: None,
+            transparent: None,
+            output_name: None,
+        };
+
+        process_image(
+            "test".to_string(),
+            "huge.tiff".to_string(),
+            oversized.clone(),
+            &rule,
+            &out_dir.to_string_lossy(),
+            &tmp.to_string_lossy(),
+            error_logger,
+            health,
+            &crate::config::global::DiskSpaceConfig::default(),
+            crate::config::global::InputFileAction::Mark,
+        )
+        .await;
+
+        // The pre-check should have bailed before creating any output.
+        let has_output = std::fs::read_dir(&out_dir)
+            .ok()
+            .map(|e| e.filter_map(|e| e.ok()).count())
+            .unwrap_or(0);
+        assert_eq!(
+            has_output, 0,
+            "oversized input should not produce output (01 §H2 pre-check)"
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[tokio::test]
+    async fn test_image_size_precheck_allows_small() {
+        // Verify a small input passes the pre-check.
+        let tmp = std::env::temp_dir().join(format!("cw-img-small-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+
+        // Generate a valid 1x1 white PNG using the image crate.
+        let input = tmp.join("input.png");
+        let img = DynamicImage::new_rgb8(1, 1);
+        img.save(&input).unwrap();
+
+        let out_dir = tmp.join("out");
+        let _ = std::fs::create_dir_all(&out_dir);
+
+        let health = Arc::new(HealthServer::new(0, "127.0.0.1".to_string(), 100));
+        let err_log_path = tmp.join("errors.log");
+        let global_cfg = crate::config::global::GlobalConfig {
+            log: crate::config::global::LogConfig {
+                errors_file: err_log_path.to_string_lossy().to_string(),
+                max_error_log_size_mb: 50,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let error_logger = Arc::new(ErrorLogger::new(&global_cfg).unwrap());
+
+        let rule = crate::config::watch::ImageRule {
+            preset: "png".to_string(),
+            subfolder: None,
+            input_extensions: vec![".png".into()],
+            output_ext: Some(".png".to_string()),
+            quality: None,
+            transparent: None,
+            output_name: None,
+        };
+
+        process_image(
+            "test".to_string(),
+            "input.png".to_string(),
+            input.clone(),
+            &rule,
+            &out_dir.to_string_lossy(),
+            &tmp.to_string_lossy(),
+            error_logger,
+            health,
+            &crate::config::global::DiskSpaceConfig::default(),
+            crate::config::global::InputFileAction::Mark,
+        )
+        .await;
+
+        // A small file should be processed and produce output.
+        let has_output = std::fs::read_dir(&out_dir)
+            .ok()
+            .map(|e| e.filter_map(|e| e.ok()).any(|e| e.path().extension().is_some_and(|ext| ext == "png")))
+            .unwrap_or(false);
+        assert!(has_output, "small PNG should be processed successfully");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 }

@@ -39,18 +39,23 @@ pub async fn run_conversion<F, Fut>(
     let result = match tokio::time::timeout(timeout, convert()).await {
         Ok(result) => result,
         Err(_) => {
-            let msg = format!("{} conversion timed out after {}s: {}", op_label, DEFAULT_TIMEOUT_S, file_name);
+            let msg = format!(
+                "{} conversion timed out after {}s: {}",
+                op_label, DEFAULT_TIMEOUT_S, file_name
+            );
             error!("{}", msg);
             error_logger.log(&msg, &file_name, op_label);
             cleanup_partial_output(output_path);
             let _ = health_server.increment_error(&watcher_name);
-            let _ = health_server.add_history(ConversionRecord {
-                time: chrono::Local::now().format("%H:%M:%S").to_string(),
-                watcher: watcher_name.clone(),
-                file: file_name.clone(),
-                status: "error".to_string(),
-                output: String::new(),
-            }).await;
+            let _ = health_server
+                .add_history(ConversionRecord {
+                    time: chrono::Local::now().format("%H:%M:%S").to_string(),
+                    watcher: watcher_name.clone(),
+                    file: file_name.clone(),
+                    status: "error".to_string(),
+                    output: String::new(),
+                })
+                .await;
             crate::utils::path::handle_input_file(&file_path, &input_file_action, false);
             info!("[Processor] Job finished: {}", file_name);
             let _ = health_server.clear_processing(&watcher_name);
@@ -62,13 +67,15 @@ pub async fn run_conversion<F, Fut>(
         Ok(output) => {
             info!("{} conversion succeeded: {}", op_label, file_name);
             let _ = health_server.increment_processed(&watcher_name);
-            let _ = health_server.add_history(ConversionRecord {
-                time: chrono::Local::now().format("%H:%M:%S").to_string(),
-                watcher: watcher_name.clone(),
-                file: file_name.clone(),
-                status: "done".to_string(),
-                output,
-            }).await;
+            let _ = health_server
+                .add_history(ConversionRecord {
+                    time: chrono::Local::now().format("%H:%M:%S").to_string(),
+                    watcher: watcher_name.clone(),
+                    file: file_name.clone(),
+                    status: "done".to_string(),
+                    output,
+                })
+                .await;
             crate::utils::path::handle_input_file(&file_path, &input_file_action, true);
         }
         Err(e) => {
@@ -78,13 +85,15 @@ pub async fn run_conversion<F, Fut>(
             error_logger.log(&msg, &file_name, op_label);
             cleanup_partial_output(output_path);
             let _ = health_server.increment_error(&watcher_name);
-            let _ = health_server.add_history(ConversionRecord {
-                time: chrono::Local::now().format("%H:%M:%S").to_string(),
-                watcher: watcher_name.clone(),
-                file: file_name.clone(),
-                status: "error".to_string(),
-                output: String::new(),
-            }).await;
+            let _ = health_server
+                .add_history(ConversionRecord {
+                    time: chrono::Local::now().format("%H:%M:%S").to_string(),
+                    watcher: watcher_name.clone(),
+                    file: file_name.clone(),
+                    status: "error".to_string(),
+                    output: String::new(),
+                })
+                .await;
             crate::utils::path::handle_input_file(&file_path, &input_file_action, false);
         }
     }

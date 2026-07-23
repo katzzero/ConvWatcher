@@ -1,0 +1,22 @@
+[package]
+name = "convwatcher-agent"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Headless ConvWatcher worker agent (ffmpeg video/audio conversions)"
+
+[dependencies]
+convwatcher-common = { path = "../convwatcher-common" }
+tokio = { workspace = true }
+clap = { version = "4.5", features = ["derive"] }
+serde = { workspace = true }
+serde_yaml = "0.9"
+log = { workspace = true }
+fern = { version = "0.7", features = ["colored"] }
+anyhow = { workspace = true }
+
+[[bin]]
+name = "convwatcher-agent"
+path = "src/main.rs"

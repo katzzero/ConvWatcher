@@ -39,7 +39,10 @@ impl EmbeddedScanner {
     pub async fn scan(&mut self) -> anyhow::Result<()> {
         // Check for updated main configs from the hot-reloader
         while let Ok(new_configs) = self.config_rx.try_recv() {
-            info!("Embedded scanner: received {} updated main config(s)", new_configs.len());
+            info!(
+                "Embedded scanner: received {} updated main config(s)",
+                new_configs.len()
+            );
             self.main_configs = new_configs;
             // Clear known configs so they get re-merged with fresh main configs
             self.known_configs.clear();
@@ -63,8 +66,7 @@ impl EmbeddedScanner {
                             wc.name,
                             wc.watch_type.type_name()
                         );
-                        self.known_configs
-                            .insert(path.clone(), (wc, *modified));
+                        self.known_configs.insert(path.clone(), (wc, *modified));
                         has_changes = true;
                     }
                     Err(e) => {
@@ -130,7 +132,8 @@ impl EmbeddedScanner {
         let embedded: EmbeddedConfig = serde_yaml::from_str(&content)?;
 
         if !self.secret.is_empty() {
-            let secrets_match = bool::from(self.secret.as_bytes().ct_eq(embedded.secret.as_bytes()));
+            let secrets_match =
+                bool::from(self.secret.as_bytes().ct_eq(embedded.secret.as_bytes()));
             if !secrets_match {
                 anyhow::bail!("Secret mismatch in {:?}", config_path);
             }
@@ -141,10 +144,7 @@ impl EmbeddedScanner {
             .and_then(|s| s.to_str())
             .ok_or_else(|| anyhow::anyhow!("Invalid filename: {:?}", config_path))?;
 
-        let base = self
-            .main_configs
-            .iter()
-            .find(|c| c.name == config_name);
+        let base = self.main_configs.iter().find(|c| c.name == config_name);
 
         match base {
             Some(manifesto) => {

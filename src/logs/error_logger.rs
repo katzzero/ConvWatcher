@@ -23,12 +23,9 @@ impl ErrorLogger {
     }
 
     pub fn log(&self, message: &str, file_name: &str, context: &str) {
-        let path = self.file.lock().unwrap();
+        let path = self.file.lock().unwrap_or_else(|p| p.into_inner());
         let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
-        let line = format!(
-            "{} [{}] {} — {}\n",
-            timestamp, context, file_name, message
-        );
+        let line = format!("{} [{}] {} — {}\n", timestamp, context, file_name, message);
 
         if let Ok(metadata) = fs::metadata(&*path) {
             if metadata.len() > self.max_size_mb * 1024 * 1024 {
@@ -37,11 +34,7 @@ impl ErrorLogger {
             }
         }
 
-        if let Ok(mut file) = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&*path)
-        {
+        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&*path) {
             let _ = file.write_all(line.as_bytes());
         }
     }

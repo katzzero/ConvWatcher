@@ -1,26 +1,54 @@
-[package]
-name = "convwatcher"
+[workspace]
+members = ["convwatcher-common", "convwatcher-agent"]
+
+[workspace.package]
 version = "0.9.8"
 edition = "2021"
-description = "A daemon that watches folders and automatically converts files"
 license = "MIT"
 repository = "https://github.com/katzzero/ConvWatcher"
 authors = ["Katzzero"]
 
-[dependencies]
+[workspace.dependencies]
 tokio = { version = "1", features = ["full"] }
-clap = { version = "4.5", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
-serde_yaml = "0.9"
 serde_json = "1"
-notify = "6.1"
 log = "0.4"
+anyhow = "1.0"
+subtle = "2"
+
+[package]
+name = "convwatcher"
+version.workspace = true
+edition.workspace = true
+description = "A daemon that watches folders and automatically converts files"
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+convwatcher-common = { path = "convwatcher-common" }
+tokio = { workspace = true }
+clap = { version = "4.5", features = ["derive"] }
+serde = { workspace = true }
+serde_yaml = "0.9"
+serde_json = { workspace = true }
+notify = "6.1"
+log = { workspace = true }
 fern = { version = "0.7", features = ["colored"] }
 chrono = "0.4"
 image = "0.25"
 tiny_http = "0.12"
-anyhow = "1.0"
-subtle = "2"
+anyhow = { workspace = true }
+subtle = { workspace = true }
+socket2 = "0.5"
+
+[[bin]]
+name = "convwatcher"
+path = "src/main.rs"
+
+[[bin]]
+name = "convwatcher-server"
+path = "src/bin/server.rs"
 
 [profile.release]
 opt-level = 3

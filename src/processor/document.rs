@@ -37,11 +37,17 @@ pub async fn process_document(
 
     let output_folder_path = PathBuf::from(output_folder);
     let base_name = get_base_name(&file_name);
-    let ext = rule.output_ext.as_deref().unwrap_or(".pdf").trim_start_matches('.');
+    let ext = rule
+        .output_ext
+        .as_deref()
+        .unwrap_or(".pdf")
+        .trim_start_matches('.');
     let output_path = match OutputNamer::generate_path(
         &output_folder_path,
         &base_name,
-        rule.output_name.as_deref().unwrap_or("{base}_converted.{ext}"),
+        rule.output_name
+            .as_deref()
+            .unwrap_or("{base}_converted.{ext}"),
         "document",
         ext,
     ) {

@@ -17,7 +17,7 @@ pub async fn check_disk_space(
         let mut low = false;
 
         if config.check_output {
-            if let Some(parent) = get_mount_point(output_folder) {
+            if let Some(parent) = canonicalize_or_self(output_folder) {
                 if let Err(e) = check_available(&parent, &config.threshold, "output").await {
                     warn!("Disk space low (output): {}", e);
                     low = true;
@@ -26,7 +26,7 @@ pub async fn check_disk_space(
         }
 
         if config.check_watch {
-            if let Some(parent) = get_mount_point(watch_folder) {
+            if let Some(parent) = canonicalize_or_self(watch_folder) {
                 if let Err(e) = check_available(&parent, &config.threshold, "watch").await {
                     warn!("Disk space low (watch): {}", e);
                     low = true;
@@ -45,7 +45,7 @@ pub async fn check_disk_space(
 }
 
 #[cfg(unix)]
-fn get_mount_point(path: &str) -> Option<std::path::PathBuf> {
+fn canonicalize_or_self(path: &str) -> Option<std::path::PathBuf> {
     use std::path::Path;
 
     let p = Path::new(path);
@@ -67,6 +67,7 @@ async fn check_available(
     let output = match tokio::process::Command::new("df")
         .arg("-kP")
         .arg(mount.as_os_str())
+        .kill_on_drop(true)
         .output()
         .await
     {
