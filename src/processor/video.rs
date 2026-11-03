@@ -3,7 +3,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 
 use anyhow::{bail, Result};
-use log::warn;
+use log::{error, warn};
 use tokio::process::Command;
 
 use crate::config::global::DiskSpaceConfig;
@@ -14,7 +14,7 @@ use crate::utils::path::get_base_name;
 
 use super::disk::check_disk_space;
 use super::namer::OutputNamer;
-
+#[allow(clippy::too_many_arguments)]
 pub async fn process_video(
     watcher_name: String,
     file_name: String,
@@ -39,16 +39,38 @@ pub async fn process_video(
 
     let output_folder_path = PathBuf::from(output_folder);
     let base_name = get_base_name(&file_name);
-    let ext = rule.output_ext.as_deref().unwrap_or(".mp4").trim_start_matches('.');
+    let ext = rule
+        .output_ext
+        .as_deref()
+        .unwrap_or(".mp4")
+        .trim_start_matches('.');
     let output_path = match OutputNamer::generate_path(
         &output_folder_path,
         &base_name,
-        rule.output_name.as_deref().unwrap_or("{base}_{codec}_{num}.{ext}"),
+        rule.output_name
+            .as_deref()
+            .unwrap_or("{base}_{codec}_{num}.{ext}"),
         rule.codec.as_deref().unwrap_or("libx264"),
         ext,
     ) {
         Ok(p) => p,
-        Err(_) => OutputNamer::generate_with_counter(&output_folder_path, &base_name, "video", ext),
+        Err(e) => {
+            warn!(
+                "generate_path failed for {}: {}; falling back",
+                file_name, e
+            );
+            match OutputNamer::generate_with_counter(&output_folder_path, &base_name, "video", ext)
+            {
+                Ok(p) => p,
+                Err(e2) => {
+                    error!(
+                        "Final output path generation failed for {}: {}; aborting",
+                        file_name, e2
+                    );
+                    return;
+                }
+            }
+        }
     };
 
     let input_path = file_path.clone();
@@ -70,7 +92,13 @@ pub async fn process_video(
     .await;
 }
 
-async fn convert_video(input: &Path, output: &Path, rule: &VideoRule, ffmpeg_path: &str, ffprobe_path: &str) -> Result<()> {
+async fn convert_video(
+    input: &Path,
+    output: &Path,
+    rule: &VideoRule,
+    ffmpeg_path: &str,
+    ffprobe_path: &str,
+) -> Result<()> {
     let quality = rule.quality.as_deref().unwrap_or("crf 23");
     let quality_args = parse_quality_value(quality);
     let codec = rule.codec.as_deref().unwrap_or("libx264");
@@ -100,7 +128,8 @@ async fn convert_video(input: &Path, output: &Path, rule: &VideoRule, ffmpeg_pat
     let audio_codec = rule.audio_codec.as_deref().unwrap_or("aac");
     cmd.arg("-c:a").arg(audio_codec);
     if audio_codec != "copy" {
-        cmd.arg("-b:a").arg(rule.audio_bitrate.as_deref().unwrap_or("128k"));
+        cmd.arg("-b:a")
+            .arg(rule.audio_bitrate.as_deref().unwrap_or("128k"));
     }
     cmd.arg(output.as_os_str())
         .stdout(Stdio::piped())
@@ -115,9 +144,13 @@ async fn convert_video(input: &Path, output: &Path, rule: &VideoRule, ffmpeg_pat
 
     if rule.check_duration.unwrap_or(true) {
         let input_duration = get_video_duration(input, ffprobe_path).await.unwrap_or(0.0);
-        let output_duration = get_video_duration(output, ffprobe_path).await.unwrap_or(0.0);
+        let output_duration = get_video_duration(output, ffprobe_path)
+            .await
+            .unwrap_or(0.0);
 
-        if input_duration > 0.0 && output_duration < input_duration * rule.min_duration_ratio.unwrap_or(0.9) {
+        if input_duration > 0.0
+            && output_duration < input_duration * rule.min_duration_ratio.unwrap_or(0.9)
+        {
             bail!(
                 "Duration mismatch: input={:.1}s output={:.1}s (min ratio: {:.2})",
                 input_duration,
@@ -171,12 +204,19 @@ pub fn parse_quality_value(quality_str: &str) -> Vec<String> {
         }
         _ => {
             let first = parts[0];
-            if first.ends_with('M') || first.ends_with('m') || first.ends_with('K') || first.ends_with('k') {
+            if first.ends_with('M')
+                || first.ends_with('m')
+                || first.ends_with('K')
+                || first.ends_with('k')
+            {
                 vec!["-b:v".to_string(), first.to_string()]
             } else if first.parse::<u32>().is_ok() {
                 vec!["-crf".to_string(), first.to_string()]
             } else {
-                warn!("Unknown quality format '{}' — falling back to -crf 23", quality_str);
+                warn!(
+                    "Unknown quality format '{}' — falling back to -crf 23",
+                    quality_str
+                );
                 vec!["-crf".to_string(), "23".to_string()]
             }
         }
@@ -188,25 +228,35 @@ pub fn parse_quality_value(quality_str: &str) -> Vec<String> {
 fn build_hwaccel_args(codec: &str) -> (Vec<String>, Vec<String>) {
     if codec.contains("_vaapi") {
         (
-            vec!["-vaapi_device".to_string(), "/dev/dri/renderD128".to_string()],
+            vec![
+                "-vaapi_device".to_string(),
+                "/dev/dri/renderD128".to_string(),
+            ],
             vec!["-vf".to_string(), "format=nv12,hwupload".to_string()],
         )
     } else if codec.contains("_qsv") {
         (
             vec![
-                "-init_hw_device".to_string(), "qsv=qsv".to_string(),
-                "-hwaccel".to_string(), "qsv".to_string(),
-                "-hwaccel_output_format".to_string(), "qsv".to_string(),
+                "-init_hw_device".to_string(),
+                "qsv=qsv".to_string(),
+                "-hwaccel".to_string(),
+                "qsv".to_string(),
+                "-hwaccel_output_format".to_string(),
+                "qsv".to_string(),
             ],
             vec![],
         )
     } else if codec.contains("_rkmpp") {
         (
             vec![
-                "-init_hw_device".to_string(), "rkmpp=rkmpp_dev".to_string(),
-                "-hwaccel".to_string(), "rkmpp".to_string(),
-                "-hwaccel_output_format".to_string(), "drm_prime".to_string(),
-                "-hwaccel_device".to_string(), "rkmpp_dev".to_string(),
+                "-init_hw_device".to_string(),
+                "rkmpp=rkmpp_dev".to_string(),
+                "-hwaccel".to_string(),
+                "rkmpp".to_string(),
+                "-hwaccel_output_format".to_string(),
+                "drm_prime".to_string(),
+                "-hwaccel_device".to_string(),
+                "rkmpp_dev".to_string(),
             ],
             vec!["-vf".to_string(), "format=nv12,hwupload".to_string()],
         )
@@ -336,5 +386,126 @@ mod tests {
         let (pre, post) = build_hwaccel_args("libx264");
         assert!(pre.is_empty());
         assert!(post.is_empty());
+    }
+
+    /// Path to the local-only test asset (HEVC .mov). Returns `None` when the
+    /// file is absent so the test can skip gracefully — the asset is never
+    /// committed.
+    fn test_mov() -> Option<std::path::PathBuf> {
+        let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test-sample/test.mov");
+        if p.exists() {
+            Some(p)
+        } else {
+            None
+        }
+    }
+
+    /// Derive the sibling ffprobe path from the system ffmpeg. Mirrors the
+    /// production fallback logic so the test validates the *correct* binary.
+    fn sibling_ffprobe(ffmpeg: &str) -> String {
+        std::path::Path::new(ffmpeg)
+            .parent()
+            .map(|p| p.join("ffprobe").to_string_lossy().to_string())
+            .unwrap_or_else(|| "/usr/bin/ffprobe".to_string())
+    }
+
+    /// Check whether the real-video test dependencies are available, returning a skip reason if not.
+    /// This consolidates the four ad-hoc skip conditions into a single helper.
+    fn check_video_test_deps() -> Option<String> {
+        // 1. test.mov asset exists?
+        let mov = test_mov();
+        if mov.is_none() {
+            return Some("test.mov not found".to_string());
+        }
+
+        // 2. ffmpeg binary found in FFMPEG_PATH env or known locations?
+        let ffmpeg_path = match std::env::var("FFMPEG_PATH") {
+            Ok(p) if std::path::Path::new(&p).exists() => p,
+            _ => {
+                let candidates = ["/opt/homebrew/bin/ffmpeg", "/usr/bin/ffmpeg"];
+                candidates
+                    .iter()
+                    .find(|p| std::path::Path::new(p).exists())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(String::new)
+            }
+        };
+        if ffmpeg_path.is_empty() {
+            return Some("ffmpeg not found".to_string());
+        }
+
+        // 3. ffprobe binary available as sibling of ffmpeg?
+        let ffprobe_bin = sibling_ffprobe(&ffmpeg_path);
+        if !std::path::Path::new(&ffprobe_bin).exists() {
+            return Some(format!("ffprobe not found at {}", ffprobe_bin));
+        }
+
+        // 4. HEVC decoder available? (needs async — we just check the binary exists here
+        // and rely on the test's inline check below as a final gate)
+        None // pass; the HEVC availability is deferred to the actual test body via `check_hevc()`
+    }
+
+    #[tokio::test]
+    async fn test_ffprobe_duration_on_real_video() {
+        // Consolidated dependency pre-check replaces four ad-hoc skip conditions.
+        let ffmpeg_path = match std::env::var("FFMPEG_PATH") {
+            Ok(p) if std::path::Path::new(&p).exists() => p,
+            _ => {
+                let candidates = ["/opt/homebrew/bin/ffmpeg", "/usr/bin/ffmpeg"];
+                candidates
+                    .iter()
+                    .find(|p| std::path::Path::new(p).exists())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(String::new)
+            }
+        };
+        // Use check_video_test_deps() which covers mov, ffmpeg, ffprobe (HEVC is tested inline below).
+        if let Some(reason) = check_video_test_deps() {
+            eprintln!("Skipping ffprobe_duration_on_real_video: {}", reason);
+            return;
+        }
+
+        let mov = test_mov().unwrap();
+        let ffmpeg_cand = ffmpeg_path;
+        let ffprobe_path = sibling_ffprobe(&ffmpeg_cand);
+
+        // Quick probe: skip if ffprobe is unavailable.
+        let probe_cmd = tokio::process::Command::new(&ffprobe_path)
+            .arg("-version")
+            .output()
+            .await;
+        match probe_cmd {
+            Ok(ref o) if o.status.success() => {}
+            _ => {
+                eprintln!("ffprobe not available — skipping ffprobe_duration_on_real_video");
+                return;
+            }
+        }
+
+        // Probe HEVC decode support — skip gracefully if unavailable.
+        let hevc_check = tokio::process::Command::new(&ffmpeg_cand)
+            .args(["-hide_banner", "-decoders"])
+            .output()
+            .await;
+        let has_hevc = match hevc_check {
+            Ok(ref o) if o.status.success() => {
+                let out = String::from_utf8_lossy(&o.stdout);
+                out.lines().any(|l| l.contains("hevc"))
+            }
+            _ => false,
+        };
+        if !has_hevc {
+            eprintln!("ffmpeg lacks HEVC decoder — skipping ffprobe_duration_on_real_video");
+            return;
+        }
+
+        let duration = get_video_duration(&mov, &ffprobe_path).await.unwrap_or(0.0);
+
+        // A duration of 0.0 indicates the ffprobe-fallback-points-at-ffmpeg
+        // bug from 02 §H5 — ffmpeg's stdout is empty so parse returns 0.0.
+        assert!(
+            (duration - 1.835).abs() < 0.05,
+            "expected duration ~1.835s, got {duration}s — if 0.0, this is the 02 §H5 ffprobe bug"
+        );
     }
 }

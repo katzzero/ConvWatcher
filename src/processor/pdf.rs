@@ -3,7 +3,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 
 use anyhow::{bail, Result};
-use log::warn;
+use log::{error, warn};
 use tokio::process::Command;
 
 use crate::config::global::DiskSpaceConfig;
@@ -14,7 +14,7 @@ use crate::utils::path::get_base_name;
 
 use super::disk::check_disk_space;
 use super::namer::OutputNamer;
-
+#[allow(clippy::too_many_arguments)]
 pub async fn process_pdf(
     watcher_name: String,
     file_name: String,
@@ -37,16 +37,37 @@ pub async fn process_pdf(
 
     let output_folder_path = PathBuf::from(output_folder);
     let base_name = get_base_name(&file_name);
-    let ext = rule.output_ext.as_deref().unwrap_or(".pdf").trim_start_matches('.');
+    let ext = rule
+        .output_ext
+        .as_deref()
+        .unwrap_or(".pdf")
+        .trim_start_matches('.');
     let output_path = match OutputNamer::generate_path(
         &output_folder_path,
         &base_name,
-        rule.output_name.as_deref().unwrap_or("{base}_converted.{ext}"),
+        rule.output_name
+            .as_deref()
+            .unwrap_or("{base}_converted.{ext}"),
         "pdf",
         ext,
     ) {
         Ok(p) => p,
-        Err(_) => OutputNamer::generate_with_counter(&output_folder_path, &base_name, "pdf", ext),
+        Err(e) => {
+            warn!(
+                "generate_path failed for {}: {}; falling back",
+                file_name, e
+            );
+            match OutputNamer::generate_with_counter(&output_folder_path, &base_name, "pdf", ext) {
+                Ok(p) => p,
+                Err(e2) => {
+                    error!(
+                        "Final output path generation failed for {}: {}; aborting",
+                        file_name, e2
+                    );
+                    return;
+                }
+            }
+        }
     };
 
     let input_path = file_path.clone();

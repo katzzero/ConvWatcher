@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use anyhow::Context;
 use log::{info, warn};
 use subtle::ConstantTimeEq;
 use tokio::sync::mpsc;
@@ -39,7 +40,10 @@ impl EmbeddedScanner {
     pub async fn scan(&mut self) -> anyhow::Result<()> {
         // Check for updated main configs from the hot-reloader
         while let Ok(new_configs) = self.config_rx.try_recv() {
-            info!("Embedded scanner: received {} updated main config(s)", new_configs.len());
+            info!(
+                "Embedded scanner: received {} updated main config(s)",
+                new_configs.len()
+            );
             self.main_configs = new_configs;
             // Clear known configs so they get re-merged with fresh main configs
             self.known_configs.clear();
@@ -63,8 +67,7 @@ impl EmbeddedScanner {
                             wc.name,
                             wc.watch_type.type_name()
                         );
-                        self.known_configs
-                            .insert(path.clone(), (wc, *modified));
+                        self.known_configs.insert(path.clone(), (wc, *modified));
                         has_changes = true;
                     }
                     Err(e) => {
@@ -126,11 +129,21 @@ impl EmbeddedScanner {
     }
 
     fn parse_and_merge(&self, config_path: &Path) -> anyhow::Result<WatchConfig> {
+        // Bugfix 2: Reject oversized override files (DoS guard)
+        let meta = std::fs::metadata(config_path)
+            .with_context(|| format!("stat override {config_path:?}"))?;
+        if meta.len() > 1_048_576 {
+            anyhow::bail!(
+                "Override file {config_path:?} is {} bytes (max 1 MiB)",
+                meta.len()
+            );
+        }
         let content = std::fs::read_to_string(config_path)?;
         let embedded: EmbeddedConfig = serde_yaml::from_str(&content)?;
 
         if !self.secret.is_empty() {
-            let secrets_match = bool::from(self.secret.as_bytes().ct_eq(embedded.secret.as_bytes()));
+            let secrets_match =
+                bool::from(self.secret.as_bytes().ct_eq(embedded.secret.as_bytes()));
             if !secrets_match {
                 anyhow::bail!("Secret mismatch in {:?}", config_path);
             }
@@ -141,10 +154,7 @@ impl EmbeddedScanner {
             .and_then(|s| s.to_str())
             .ok_or_else(|| anyhow::anyhow!("Invalid filename: {:?}", config_path))?;
 
-        let base = self
-            .main_configs
-            .iter()
-            .find(|c| c.name == config_name);
+        let base = self.main_configs.iter().find(|c| c.name == config_name);
 
         match base {
             Some(manifesto) => {
@@ -170,7 +180,7 @@ impl EmbeddedScanner {
 
     fn merge_all(&self) -> Vec<WatchConfig> {
         let mut result: Vec<WatchConfig> = self.main_configs.clone();
-        for (_, (wc, _)) in &self.known_configs {
+        for (wc, _) in self.known_configs.values() {
             if let Some(existing) = result.iter_mut().find(|c| c.name == wc.name) {
                 existing.watch_type = wc.watch_type.clone();
                 if !wc.output_folder.is_empty() {
@@ -200,10 +210,13 @@ pub async fn run_embedded_scanner(
     scan_interval_secs: u64,
     reload_tx: mpsc::Sender<Vec<WatchConfig>>,
     main_configs: Vec<WatchConfig>,
-    config_rx: mpsc::Receiver<Vec<WatchConfig>>,
+    mut config_rx: mpsc::Receiver<Vec<WatchConfig>>,
 ) {
     if scan_interval_secs == 0 {
         info!("Watch config scanning is disabled");
+        // Drain config_rx to prevent the sender (hot-reloader) from blocking
+        // if the channel buffer fills up.
+        while config_rx.try_recv().is_ok() {}
         return;
     }
 

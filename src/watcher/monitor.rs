@@ -15,8 +15,19 @@ use crate::config::watch::{WatchConfig, WatchType};
 use crate::health::server::HealthServer;
 use crate::processor::job::{ConversionJob, MatchedRule};
 
+/// Type alias for the file stability state machine.
+/// `(first_seen: Instant, last_size: u64)` maps to a (file_path → FileState) in
+/// `file_states`. The semantics are:
+///
+/// - When we first see or re-scan a file, we set `first_seen` to the current instant
+///   and record `last_size` as the file size at that moment.
+/// - If the file's size changes mid-write, we reset `first_seen` to now with the
+///   new `last_size`, restarting the stability timer.
+/// - When the elapsed time since `first_seen` exceeds `stable_time` (default 5s)
+///   and no size change has occurred, the file is "stable" — safe to begin
+///   conversion because the writer appears to have finished.
 type FileState = (Instant, u64);
-
+#[allow(clippy::too_many_arguments)]
 pub async fn run_file_monitor(
     watch_folder: &str,
     tx: mpsc::Sender<ConversionJob>,
@@ -44,8 +55,8 @@ pub async fn run_file_monitor(
 
     let watch_dir = watch_path.clone();
     let event_tx_clone = event_tx.clone();
-    let mut watcher: RecommendedWatcher = match notify::recommended_watcher(
-        move |res: Result<Event, notify::Error>| {
+    let mut watcher: RecommendedWatcher =
+        match notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
             if let Ok(event) = res {
                 match event.kind {
                     EventKind::Create(_) | EventKind::Modify(_) => {
@@ -58,14 +69,13 @@ pub async fn run_file_monitor(
                     _ => {}
                 }
             }
-        },
-    )
-    .map_err(|e| error!("Failed to create watcher: {}", e))
-    .ok()
-    {
-        Some(w) => w,
-        None => return,
-    };
+        })
+        .map_err(|e| error!("Failed to create watcher: {}", e))
+        .ok()
+        {
+            Some(w) => w,
+            None => return,
+        };
 
     if let Err(e) = watcher.watch(&watch_dir, RecursiveMode::Recursive) {
         error!("Failed to watch {}: {}", watch_folder, e);
@@ -111,7 +121,7 @@ pub async fn run_file_monitor(
         }
     }
 }
-
+#[allow(clippy::too_many_arguments)]
 async fn scan_directory(
     watch_dir: &Path,
     file_states: &mut HashMap<PathBuf, FileState>,
@@ -157,25 +167,23 @@ async fn scan_directory(
             match file_states.get(&path) {
                 Some(&(first_seen, last_size)) => {
                     if current_size != last_size {
-                        file_states.insert(path.clone(), (first_seen, current_size));
+                        file_states.insert(path.clone(), (Instant::now(), current_size));
                     } else if first_seen.elapsed() >= stable_time {
-                        validate_and_promote_config(
-                            &path,
-                            config,
-                            global_config,
-                        );
+                        validate_and_promote_config(&path, config, global_config);
                         file_states.remove(&path);
                     }
                 }
                 None => {
-                    file_states
-                        .insert(path.clone(), (Instant::now(), current_size));
+                    file_states.insert(path.clone(), (Instant::now(), current_size));
                 }
             }
             continue;
         }
 
-        if file_name.ends_with(".invalid") || file_name.ends_with(".done") || file_name.ends_with(".error") {
+        if file_name.ends_with(".invalid")
+            || file_name.ends_with(".done")
+            || file_name.ends_with(".error")
+        {
             continue;
         }
 
@@ -188,7 +196,8 @@ async fn scan_directory(
         match file_states.get(&path) {
             Some(&(first_seen, last_size)) => {
                 if current_size != last_size {
-                    file_states.insert(path.clone(), (first_seen, current_size));
+                    // Reset timer on size change (AGENTS.md contract)
+                    file_states.insert(path.clone(), (Instant::now(), current_size));
                 } else if first_seen.elapsed() >= stable_time {
                     let already_processing = {
                         let mut pf = processing_files.lock().await;
@@ -200,14 +209,25 @@ async fn scan_directory(
                         }
                     };
                     if already_processing {
+                        file_states.remove(&path);
                         continue;
                     }
-                    if let Some(job) = create_job(&path, &file_name, config, watcher_name, global_config.input_file_action.clone()) {
-                        let _ = health_server.enqueue(&file_name);
+                    if let Some(job) = create_job(
+                        &path,
+                        &file_name,
+                        config,
+                        watcher_name,
+                        global_config.input_file_action.clone(),
+                    ) {
                         if tx.send(job).await.is_err() {
-                            error!("Failed to send job to worker pool");
+                            error!("Failed to send job to job queue");
                             processing_files.lock().await.remove(&path);
+                            file_states.remove(&path);
+                            continue;
                         }
+                        let _ = health_server.enqueue(&file_name);
+                    } else {
+                        processing_files.lock().await.remove(&path);
                     }
                     file_states.remove(&path);
                 }
@@ -219,11 +239,23 @@ async fn scan_directory(
     }
 }
 
-fn validate_and_promote_config(
-    config_path: &Path,
-    manifest: &WatchConfig,
-    global: &GlobalConfig,
-) {
+fn validate_and_promote_config(config_path: &Path, manifest: &WatchConfig, global: &GlobalConfig) {
+    // Reject names with path separators or directory traversal.
+    let name = &manifest.name;
+    if name.contains('/') || name.contains('\\') || name.contains("..") {
+        warn!("Invalid config name '{name}' — rejected (path traversal)");
+        create_invalid_marker(config_path, manifest);
+        return;
+    }
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-')
+    {
+        warn!("Invalid config name '{name}' — rejected (invalid characters)");
+        create_invalid_marker(config_path, manifest);
+        return;
+    }
+
     let content = match std::fs::read_to_string(config_path) {
         Ok(c) => c,
         Err(e) => {
@@ -248,7 +280,12 @@ fn validate_and_promote_config(
             config_path
         );
     } else {
-        let secrets_match = bool::from(global.embedded_secret.as_bytes().ct_eq(embedded.secret.as_bytes()));
+        let secrets_match = bool::from(
+            global
+                .embedded_secret
+                .as_bytes()
+                .ct_eq(embedded.secret.as_bytes()),
+        );
         if !secrets_match {
             warn!("Secret mismatch in {:?}", config_path);
             create_invalid_marker(config_path, manifest);
@@ -306,7 +343,7 @@ fn create_invalid_marker(config_path: &Path, manifest: &WatchConfig) {
 }
 
 fn find_matching_rule(
-    file_path: &PathBuf,
+    file_path: &Path,
     _file_name: &str,
     watch_type: &WatchType,
 ) -> Option<MatchedRule> {
@@ -323,13 +360,44 @@ fn find_matching_rule(
         .map(|s| s[2..].to_lowercase());
 
     if let Some(ref fmt) = subfolder_format {
+        // Subfolder rules must also match the file extension (03 §H7).
         let matched = match watch_type {
-            WatchType::Video { rules } => rules.iter().find(|r| r.subfolder.as_deref() == Some(fmt)).map(|r| MatchedRule::Video(r.clone())),
-            WatchType::Image { rules } => rules.iter().find(|r| r.subfolder.as_deref() == Some(fmt)).map(|r| MatchedRule::Image(r.clone())),
-            WatchType::Audio { rules } => rules.iter().find(|r| r.subfolder.as_deref() == Some(fmt)).map(|r| MatchedRule::Audio(r.clone())),
-            WatchType::Pdf { rules } => rules.iter().find(|r| r.subfolder.as_deref() == Some(fmt)).map(|r| MatchedRule::Pdf(r.clone())),
-            WatchType::Document { rules } => rules.iter().find(|r| r.subfolder.as_deref() == Some(fmt)).map(|r| MatchedRule::Document(r.clone())),
-            WatchType::Custom { rules } => rules.iter().find(|r| r.subfolder.as_deref() == Some(fmt)).map(|r| MatchedRule::Custom(r.clone())),
+            WatchType::Video { rules } => rules
+                .iter()
+                .find(|r| {
+                    r.subfolder.as_deref() == Some(fmt) && r.input_extensions.contains(&file_ext)
+                })
+                .map(|r| MatchedRule::Video(r.clone())),
+            WatchType::Image { rules } => rules
+                .iter()
+                .find(|r| {
+                    r.subfolder.as_deref() == Some(fmt) && r.input_extensions.contains(&file_ext)
+                })
+                .map(|r| MatchedRule::Image(r.clone())),
+            WatchType::Audio { rules } => rules
+                .iter()
+                .find(|r| {
+                    r.subfolder.as_deref() == Some(fmt) && r.input_extensions.contains(&file_ext)
+                })
+                .map(|r| MatchedRule::Audio(r.clone())),
+            WatchType::Pdf { rules } => rules
+                .iter()
+                .find(|r| {
+                    r.subfolder.as_deref() == Some(fmt) && r.input_extensions.contains(&file_ext)
+                })
+                .map(|r| MatchedRule::Pdf(r.clone())),
+            WatchType::Document { rules } => rules
+                .iter()
+                .find(|r| {
+                    r.subfolder.as_deref() == Some(fmt) && r.input_extensions.contains(&file_ext)
+                })
+                .map(|r| MatchedRule::Document(r.clone())),
+            WatchType::Custom { rules } => rules
+                .iter()
+                .find(|r| {
+                    r.subfolder.as_deref() == Some(fmt) && r.input_extensions.contains(&file_ext)
+                })
+                .map(|r| MatchedRule::Custom(r.clone())),
         };
 
         if matched.is_some() {
@@ -338,32 +406,48 @@ fn find_matching_rule(
     }
 
     match watch_type {
-        WatchType::Video { rules } => rules.iter().find(|r| r.subfolder.is_none() && r.input_extensions.contains(&file_ext)).map(|r| MatchedRule::Video(r.clone())),
-        WatchType::Image { rules } => rules.iter().find(|r| r.subfolder.is_none() && r.input_extensions.contains(&file_ext)).map(|r| MatchedRule::Image(r.clone())),
-        WatchType::Audio { rules } => rules.iter().find(|r| r.subfolder.is_none() && r.input_extensions.contains(&file_ext)).map(|r| MatchedRule::Audio(r.clone())),
-        WatchType::Pdf { rules } => rules.iter().find(|r| r.subfolder.is_none() && r.input_extensions.contains(&file_ext)).map(|r| MatchedRule::Pdf(r.clone())),
-        WatchType::Document { rules } => rules.iter().find(|r| r.subfolder.is_none() && r.input_extensions.contains(&file_ext)).map(|r| MatchedRule::Document(r.clone())),
-        WatchType::Custom { rules } => rules.iter().find(|r| r.subfolder.is_none() && r.input_extensions.contains(&file_ext)).map(|r| MatchedRule::Custom(r.clone())),
+        WatchType::Video { rules } => rules
+            .iter()
+            .find(|r| r.subfolder.is_none() && r.input_extensions.contains(&file_ext))
+            .map(|r| MatchedRule::Video(r.clone())),
+        WatchType::Image { rules } => rules
+            .iter()
+            .find(|r| r.subfolder.is_none() && r.input_extensions.contains(&file_ext))
+            .map(|r| MatchedRule::Image(r.clone())),
+        WatchType::Audio { rules } => rules
+            .iter()
+            .find(|r| r.subfolder.is_none() && r.input_extensions.contains(&file_ext))
+            .map(|r| MatchedRule::Audio(r.clone())),
+        WatchType::Pdf { rules } => rules
+            .iter()
+            .find(|r| r.subfolder.is_none() && r.input_extensions.contains(&file_ext))
+            .map(|r| MatchedRule::Pdf(r.clone())),
+        WatchType::Document { rules } => rules
+            .iter()
+            .find(|r| r.subfolder.is_none() && r.input_extensions.contains(&file_ext))
+            .map(|r| MatchedRule::Document(r.clone())),
+        WatchType::Custom { rules } => rules
+            .iter()
+            .find(|r| r.subfolder.is_none() && r.input_extensions.contains(&file_ext))
+            .map(|r| MatchedRule::Custom(r.clone())),
     }
 }
 
 fn create_job(
-    file_path: &PathBuf,
+    file_path: &Path,
     file_name: &str,
     watch_config: &WatchConfig,
     watcher_name: &str,
     input_file_action: crate::config::global::InputFileAction,
 ) -> Option<ConversionJob> {
-    find_matching_rule(file_path, file_name, &watch_config.watch_type).map(|rule| {
-        ConversionJob {
-            watcher_name: watcher_name.to_string(),
-            file_name: file_name.to_string(),
-            file_path: file_path.clone(),
-            matched_rule: rule,
-            output_folder: watch_config.output_folder.clone(),
-            watch_folder: watch_config.watch_folder.clone(),
-            input_file_action,
-        }
+    find_matching_rule(file_path, file_name, &watch_config.watch_type).map(|rule| ConversionJob {
+        watcher_name: watcher_name.to_string(),
+        file_name: file_name.to_string(),
+        file_path: file_path.to_path_buf(),
+        matched_rule: rule,
+        output_folder: watch_config.output_folder.clone(),
+        watch_folder: watch_config.watch_folder.clone(),
+        input_file_action,
     })
 }
 
@@ -378,8 +462,11 @@ pub fn create_folders(watch_config: &WatchConfig) -> anyhow::Result<()> {
     }
 
     // Also create any subfolders referenced by rules but not declared
-    let declared_names: std::collections::HashSet<&str> =
-        watch_config.subfolders.iter().map(|s| s.name.as_str()).collect();
+    let declared_names: std::collections::HashSet<&str> = watch_config
+        .subfolders
+        .iter()
+        .map(|s| s.name.as_str())
+        .collect();
 
     let rule_subfolders: Vec<&str> = rule_subfolder_names(&watch_config.watch_type);
 
@@ -395,12 +482,30 @@ pub fn create_folders(watch_config: &WatchConfig) -> anyhow::Result<()> {
 
 fn rule_subfolder_names(watch_type: &WatchType) -> Vec<&str> {
     match watch_type {
-        WatchType::Video { rules } => rules.iter().filter_map(|r| r.subfolder.as_deref()).collect(),
-        WatchType::Image { rules } => rules.iter().filter_map(|r| r.subfolder.as_deref()).collect(),
-        WatchType::Audio { rules } => rules.iter().filter_map(|r| r.subfolder.as_deref()).collect(),
-        WatchType::Pdf { rules } => rules.iter().filter_map(|r| r.subfolder.as_deref()).collect(),
-        WatchType::Document { rules } => rules.iter().filter_map(|r| r.subfolder.as_deref()).collect(),
-        WatchType::Custom { rules } => rules.iter().filter_map(|r| r.subfolder.as_deref()).collect(),
+        WatchType::Video { rules } => rules
+            .iter()
+            .filter_map(|r| r.subfolder.as_deref())
+            .collect(),
+        WatchType::Image { rules } => rules
+            .iter()
+            .filter_map(|r| r.subfolder.as_deref())
+            .collect(),
+        WatchType::Audio { rules } => rules
+            .iter()
+            .filter_map(|r| r.subfolder.as_deref())
+            .collect(),
+        WatchType::Pdf { rules } => rules
+            .iter()
+            .filter_map(|r| r.subfolder.as_deref())
+            .collect(),
+        WatchType::Document { rules } => rules
+            .iter()
+            .filter_map(|r| r.subfolder.as_deref())
+            .collect(),
+        WatchType::Custom { rules } => rules
+            .iter()
+            .filter_map(|r| r.subfolder.as_deref())
+            .collect(),
     }
 }
 
@@ -431,18 +536,26 @@ mod tests {
                         preset: "libx264".to_string(),
                         subfolder: None,
                         input_extensions: vec![".mp4".into(), ".mxf".into()],
-                        output_ext: None, codec: None, quality: None,
-                        audio_codec: None, audio_bitrate: None,
-                        output_name: None, check_duration: None,
+                        output_ext: None,
+                        codec: None,
+                        quality: None,
+                        audio_codec: None,
+                        audio_bitrate: None,
+                        output_name: None,
+                        check_duration: None,
                         min_duration_ratio: None,
                     },
                     VideoRule {
                         preset: "h264_nvenc".to_string(),
                         subfolder: Some("gpu".to_string()),
                         input_extensions: vec![".mxf".into()],
-                        output_ext: None, codec: None, quality: None,
-                        audio_codec: None, audio_bitrate: None,
-                        output_name: None, check_duration: None,
+                        output_ext: None,
+                        codec: None,
+                        quality: None,
+                        audio_codec: None,
+                        audio_bitrate: None,
+                        output_name: None,
+                        check_duration: None,
                         min_duration_ratio: None,
                     },
                 ],
@@ -454,7 +567,13 @@ mod tests {
     fn test_create_job_matches_by_extension() {
         let config = test_video_config();
         let file_path = PathBuf::from("/app/inputs/test/clip.mp4");
-        let job = create_job(&file_path, "clip.mp4", &config, "watcher_test", crate::config::global::InputFileAction::Mark);
+        let job = create_job(
+            &file_path,
+            "clip.mp4",
+            &config,
+            "watcher_test",
+            crate::config::global::InputFileAction::Mark,
+        );
         assert!(job.is_some());
         let job = job.unwrap();
         assert_eq!(job.file_name, "clip.mp4");
@@ -464,7 +583,13 @@ mod tests {
     fn test_create_job_matches_by_subfolder_format() {
         let config = test_video_config();
         let file_path = PathBuf::from("/app/inputs/test/->gpu/broadcast.mxf");
-        let job = create_job(&file_path, "broadcast.mxf", &config, "watcher_test", crate::config::global::InputFileAction::Mark);
+        let job = create_job(
+            &file_path,
+            "broadcast.mxf",
+            &config,
+            "watcher_test",
+            crate::config::global::InputFileAction::Mark,
+        );
         assert!(job.is_some());
     }
 
@@ -472,7 +597,13 @@ mod tests {
     fn test_create_job_no_match_unknown_extension() {
         let config = test_video_config();
         let file_path = PathBuf::from("/app/inputs/test/clip.xyz");
-        let job = create_job(&file_path, "clip.xyz", &config, "watcher_test", crate::config::global::InputFileAction::Mark);
+        let job = create_job(
+            &file_path,
+            "clip.xyz",
+            &config,
+            "watcher_test",
+            crate::config::global::InputFileAction::Mark,
+        );
         assert!(job.is_none());
     }
 
@@ -482,8 +613,71 @@ mod tests {
         // Subfolder format doesn't match, extension doesn't match → no job
         let config = test_video_config();
         let file_path = PathBuf::from("/app/inputs/test/->unknown/clip.xyz");
-        let job = create_job(&file_path, "clip.xyz", &config, "watcher_test", crate::config::global::InputFileAction::Mark);
+        let job = create_job(
+            &file_path,
+            "clip.xyz",
+            &config,
+            "watcher_test",
+            crate::config::global::InputFileAction::Mark,
+        );
         assert!(job.is_none());
+    }
+
+    #[test]
+    fn test_create_job_no_match_known_subfolder_wrong_extension() {
+        // File in ->gpu/ (known subfolder with a rule) but extension doesn't
+        // match that rule's input_extensions → should NOT match (regression
+        // test for bug 03 §H7 where subfolder-only matching would match any
+        // extension in a known subfolder).
+        let config = test_video_config();
+        // ->gpu rule only accepts .mxf, but this is .txt
+        let file_path = PathBuf::from("/app/inputs/test/->gpu/notes.txt");
+        let job = create_job(
+            &file_path,
+            "notes.txt",
+            &config,
+            "watcher_test",
+            crate::config::global::InputFileAction::Mark,
+        );
+        assert!(job.is_none(), "should NOT match .txt in ->gpu subfolder");
+    }
+
+    #[test]
+    fn test_stability_timer_resets_on_size_change() {
+        use std::time::Instant;
+
+        let mut file_states: HashMap<PathBuf, FileState> = HashMap::new();
+        let path = PathBuf::from("/tmp/test_stability.mp4");
+
+        // First scan: file appears with 100 bytes
+        let t0 = Instant::now();
+        file_states.insert(path.clone(), (t0, 100));
+
+        // Simulate a size change: file grows to 200 bytes
+        let (first_seen, _) = file_states.get(&path).unwrap();
+        let old_first_seen = *first_seen;
+        file_states.insert(path.clone(), (Instant::now(), 200));
+
+        // first_seen MUST have advanced (reset on size change)
+        let (new_first_seen, new_size) = file_states.get(&path).unwrap();
+        assert_eq!(*new_size, 200, "size should be updated");
+        assert!(
+            *new_first_seen > old_first_seen,
+            "first_seen must reset on size change (old={:?}, new={:?})",
+            old_first_seen,
+            new_first_seen
+        );
+
+        // Now simulate a scan with no size change and a stable_time that
+        // hasn't elapsed since the NEW first_seen → file should NOT be ready.
+        let stable_time = Duration::from_secs(60);
+        let elapsed = new_first_seen.elapsed();
+        assert!(
+            elapsed < stable_time,
+            "immediately after reset, elapsed ({:?}) must be < stable_time ({:?})",
+            elapsed,
+            stable_time
+        );
     }
 
     #[test]
@@ -500,18 +694,26 @@ mod tests {
                         preset: "libx264".to_string(),
                         subfolder: Some("h264".to_string()),
                         input_extensions: vec![".mp4".into()],
-                        output_ext: None, codec: None, quality: None,
-                        audio_codec: None, audio_bitrate: None,
-                        output_name: None, check_duration: None,
+                        output_ext: None,
+                        codec: None,
+                        quality: None,
+                        audio_codec: None,
+                        audio_bitrate: None,
+                        output_name: None,
+                        check_duration: None,
                         min_duration_ratio: None,
                     },
                     VideoRule {
                         preset: "libx265".to_string(),
                         subfolder: Some("h265".to_string()),
                         input_extensions: vec![".mp4".into()],
-                        output_ext: None, codec: None, quality: None,
-                        audio_codec: None, audio_bitrate: None,
-                        output_name: None, check_duration: None,
+                        output_ext: None,
+                        codec: None,
+                        quality: None,
+                        audio_codec: None,
+                        audio_bitrate: None,
+                        output_name: None,
+                        check_duration: None,
                         min_duration_ratio: None,
                     },
                 ],

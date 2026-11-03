@@ -32,14 +32,20 @@ pub fn handle_input_file(path: &Path, action: &InputFileAction, success: bool) {
 }
 
 fn mark_done(path: &Path) {
-    let done_path = path.with_file_name(format!("{}.done", path.file_name().unwrap_or_default().to_string_lossy()));
+    let done_path = path.with_file_name(format!(
+        "{}.done",
+        path.file_name().unwrap_or_default().to_string_lossy()
+    ));
     if let Err(e) = std::fs::rename(path, &done_path) {
         log::warn!("Failed to mark file as done {:?}: {}", path, e);
     }
 }
 
 fn mark_error(path: &Path) {
-    let error_path = path.with_file_name(format!("{}.error", path.file_name().unwrap_or_default().to_string_lossy()));
+    let error_path = path.with_file_name(format!(
+        "{}.error",
+        path.file_name().unwrap_or_default().to_string_lossy()
+    ));
     if let Err(e) = std::fs::rename(path, &error_path) {
         log::warn!("Failed to mark file as error {:?}: {}", path, e);
     }

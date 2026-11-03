@@ -1,0 +1,34 @@
+# ─────────────────────────────────────────────────────────────
+# ConvWatcher — Embedded Override Example
+#
+# This YAML file demonstrates an override configuration for the embedded scanner.
+# Copy this file into a watch_folder directory to have it automatically detected
+# and merged with the main config.
+#
+# IMPORTANT: The filename (without extension) must match the name of the watcher
+# you want to override. For example, to override a watcher named "my_watcher",
+# save this file as "my_watcher.yaml" inside your watch_folder.
+#
+# The `secret` must match `global.embedded_secret` from the main config. On first
+# run ConvWatcher generates a random secret; copy it from config/config.yaml.
+# ─────────────────────────────────────────────────────────────
+
+secret: "<embedded_secret-from-config>"
+
+output_folder: /path/to/output/override
+
+type: video
+rules:
+  # Root folder rule for general MP4/MKV files
+  - input_extensions: [.mp4, .mkv, .mov]
+    preset: libx264
+    quality: crf 20
+    output_name: "{base}_optimized_{num}.{ext}"
+    check_duration: true
+    min_duration_ratio: 0.95
+
+  # Subfolder rule for GPU-encoded files (files in ->gpu/)
+  - subfolder: gpu
+    input_extensions: [.mxf, .mts, .mov]
+    preset: h264_nvenc
+    output_name: "{base}_gpu_{num}.{ext}"

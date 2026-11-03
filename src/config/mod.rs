@@ -1,23 +1,37 @@
 pub mod codec_registry;
+pub mod embedded;
 pub mod global;
 pub mod watch;
-pub mod embedded;
 
+use rand::Rng;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use log::{info, warn};
 
-use codec_registry::{CodecRegistry, resolve_watchers};
+use codec_registry::{resolve_watchers, CodecRegistry};
 use global::GlobalConfig;
 use watch::{WatchConfig, WatchType};
 
 const CONFIG_PATH: &str = "config/config.yaml";
 
+/// Maximum config file size (2 MiB) to prevent DoS attacks.
+const MAX_CONFIG_BYTES: u64 = 2 * 1024 * 1024;
+
+/// Generate a cryptographically random embedded_secret (64 hex chars).
+fn generate_secret() -> String {
+    let mut rng = rand::rngs::OsRng;
+    (0..32)
+        .map(|_| format!("{:02x}", rng.gen::<u8>()))
+        .collect()
+}
+
 /// Load all configuration from a single config.yaml file.
 /// Returns (GlobalConfig, Vec<WatchConfig>, CodecRegistry).
-pub fn load_config(custom_path: Option<&Path>) -> Result<(GlobalConfig, Vec<WatchConfig>, CodecRegistry)> {
+pub fn load_config(
+    custom_path: Option<&Path>,
+) -> Result<(GlobalConfig, Vec<WatchConfig>, CodecRegistry)> {
     let path = custom_path
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| PathBuf::from(CONFIG_PATH));
@@ -36,8 +50,20 @@ pub fn load_config(custom_path: Option<&Path>) -> Result<(GlobalConfig, Vec<Watc
         return Ok((global, watchers, registry));
     }
 
-    let content = fs::read_to_string(&path)
-        .with_context(|| format!("Cannot read {}", path.display()))?;
+    // FIX A2: Reject oversized config files (DoS guard)
+    let meta =
+        std::fs::metadata(&path).with_context(|| format!("Cannot stat {}", path.display()))?;
+    if meta.len() > MAX_CONFIG_BYTES {
+        anyhow::bail!(
+            "Config file {} is {} bytes — exceeds maximum of {} bytes (2 MiB)",
+            path.display(),
+            meta.len(),
+            MAX_CONFIG_BYTES
+        );
+    }
+
+    let content =
+        fs::read_to_string(&path).with_context(|| format!("Cannot read {}", path.display()))?;
 
     #[derive(serde::Deserialize)]
     struct ConfigFile {
@@ -48,9 +74,11 @@ pub fn load_config(custom_path: Option<&Path>) -> Result<(GlobalConfig, Vec<Watc
     let config_file: ConfigFile = match serde_yaml::from_str(&content) {
         Ok(cf) => cf,
         Err(e) => {
-            warn!("Failed to parse {}: {}", path.display(), e);
-            let default = generate_default_config(&path)?;
-            return Ok(default);
+            anyhow::bail!(
+                "Failed to parse {}: {}. The file was NOT overwritten — fix it manually.",
+                path.display(),
+                e
+            );
         }
     };
 
@@ -67,7 +95,9 @@ pub fn load_config(custom_path: Option<&Path>) -> Result<(GlobalConfig, Vec<Watc
         &config_dir.join(&global.codec_presets.pdf),
         &config_dir.join(&global.codec_presets.document),
         &config_dir.join(&global.codec_presets.custom),
-    ].iter().all(|p| p.exists());
+    ]
+    .iter()
+    .all(|p| p.exists());
 
     if !presets_ok {
         warn!("One or more preset files missing — regenerating defaults");
@@ -86,15 +116,45 @@ pub fn load_config(custom_path: Option<&Path>) -> Result<(GlobalConfig, Vec<Watc
     validate_config(&global, &watchers)?;
 
     // Create missing directories
-    create_directories(&global, &watchers)?;
+    create_directories(&global, &watchers, &config_dir)?;
 
     Ok((global, watchers, registry))
 }
 
 fn validate_config(global: &GlobalConfig, watchers: &[WatchConfig]) -> Result<()> {
+    // Reject zero max_concurrent_conversions (would deadlock)
+    if global.max_concurrent_conversions == 0 {
+        anyhow::bail!("max_concurrent must be >= 1");
+    }
+
+    // Reject zero intervals that would panic in tokio::time::interval
+    if global.file_check_interval_ms == 0 {
+        anyhow::bail!(
+            "file_check_interval must be > 0 (set to 0 would panic tokio::time::interval)"
+        );
+    }
+    if global.config_refresh_interval_s == 0 {
+        anyhow::bail!("refresh_interval must be > 0 (set to 0 would panic tokio::time::interval)");
+    }
+    if global.disk_space.check_interval_s == 0 {
+        anyhow::bail!(
+            "disk_space.check_interval must be > 0 (set to 0 would panic tokio::time::interval)"
+        );
+    }
+
+    // Warn about risky small stable_time
+    if global.stable_time_ms == 0 {
+        warn!("stable_time is 0ms — files will be queued immediately on first scan, risking half-written conversions");
+    }
+
     // Validate global paths
     validate_absolute_path(&global.log.errors_file, "log.errors_file")?;
+    validate_absolute_path(&global.log.app_log_file, "log.app_log_file")?;
     validate_absolute_path(&global.history.file, "history.file")?;
+    validate_absolute_path(&global.ffmpeg_path, "global.ffmpeg_path")?;
+    if let Some(ref fp) = global.ffprobe_path {
+        validate_absolute_path(fp, "global.ffprobe_path")?;
+    }
 
     // Validate watcher paths
     for watcher in watchers {
@@ -104,7 +164,10 @@ fn validate_config(global: &GlobalConfig, watchers: &[WatchConfig]) -> Result<()
                 watcher.name
             );
         }
-        validate_absolute_path(&watcher.watch_folder, &format!("watcher '{}'.watch_folder", watcher.name))?;
+        validate_absolute_path(
+            &watcher.watch_folder,
+            &format!("watcher '{}'.watch_folder", watcher.name),
+        )?;
 
         if watcher.output_folder.is_empty() {
             anyhow::bail!(
@@ -112,7 +175,21 @@ fn validate_config(global: &GlobalConfig, watchers: &[WatchConfig]) -> Result<()
                 watcher.name
             );
         }
-        validate_absolute_path(&watcher.output_folder, &format!("watcher '{}'.output_folder", watcher.name))?;
+        validate_absolute_path(
+            &watcher.output_folder,
+            &format!("watcher '{}'.output_folder", watcher.name),
+        )?;
+
+        // Validate subfolder names don't contain path separators
+        for sf in &watcher.subfolders {
+            if sf.name.contains('/') || sf.name.contains('\\') || sf.name.contains("..") {
+                anyhow::bail!(
+                    "Watcher '{}': subfolder name '{}' contains path separators or '..'",
+                    watcher.name,
+                    sf.name
+                );
+            }
+        }
 
         // Validate rules have non-empty input_extensions
         match &watcher.watch_type {
@@ -121,7 +198,8 @@ fn validate_config(global: &GlobalConfig, watchers: &[WatchConfig]) -> Result<()
                     if rule.input_extensions.is_empty() {
                         anyhow::bail!(
                             "Watcher '{}', video rule {}: input_extensions must not be empty",
-                            watcher.name, i
+                            watcher.name,
+                            i
                         );
                     }
                 }
@@ -131,7 +209,8 @@ fn validate_config(global: &GlobalConfig, watchers: &[WatchConfig]) -> Result<()
                     if rule.input_extensions.is_empty() {
                         anyhow::bail!(
                             "Watcher '{}', image rule {}: input_extensions must not be empty",
-                            watcher.name, i
+                            watcher.name,
+                            i
                         );
                     }
                 }
@@ -141,7 +220,8 @@ fn validate_config(global: &GlobalConfig, watchers: &[WatchConfig]) -> Result<()
                     if rule.input_extensions.is_empty() {
                         anyhow::bail!(
                             "Watcher '{}', audio rule {}: input_extensions must not be empty",
-                            watcher.name, i
+                            watcher.name,
+                            i
                         );
                     }
                 }
@@ -151,7 +231,8 @@ fn validate_config(global: &GlobalConfig, watchers: &[WatchConfig]) -> Result<()
                     if rule.input_extensions.is_empty() {
                         anyhow::bail!(
                             "Watcher '{}', pdf rule {}: input_extensions must not be empty",
-                            watcher.name, i
+                            watcher.name,
+                            i
                         );
                     }
                 }
@@ -161,7 +242,8 @@ fn validate_config(global: &GlobalConfig, watchers: &[WatchConfig]) -> Result<()
                     if rule.input_extensions.is_empty() {
                         anyhow::bail!(
                             "Watcher '{}', document rule {}: input_extensions must not be empty",
-                            watcher.name, i
+                            watcher.name,
+                            i
                         );
                     }
                 }
@@ -171,7 +253,8 @@ fn validate_config(global: &GlobalConfig, watchers: &[WatchConfig]) -> Result<()
                     if rule.input_extensions.is_empty() {
                         anyhow::bail!(
                             "Watcher '{}', custom rule {}: input_extensions must not be empty",
-                            watcher.name, i
+                            watcher.name,
+                            i
                         );
                     }
                 }
@@ -187,15 +270,31 @@ fn validate_absolute_path(path: &str, label: &str) -> Result<()> {
     if !p.is_absolute() {
         anyhow::bail!(
             "{}: must be an absolute path, got '{}'. Example: /app/inputs/default/",
-            label, path
+            label,
+            path
         );
+    }
+    for component in p.components() {
+        if matches!(component, std::path::Component::ParentDir) {
+            anyhow::bail!("{}: path must not contain '..', got '{}'", label, path);
+        }
     }
     Ok(())
 }
 
-fn create_directories(global: &GlobalConfig, watchers: &[WatchConfig]) -> Result<()> {
-    // Create log directory
+fn create_directories(
+    global: &GlobalConfig,
+    watchers: &[WatchConfig],
+    config_dir: &Path,
+) -> Result<()> {
+    // Create log directory (covers both errors and app logs)
     if let Some(parent) = Path::new(&global.log.errors_file).parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("Cannot create log directory {}", parent.display()))?;
+    }
+
+    // Also ensure app_log_file's parent exists (might be same dir as errors_file)
+    if let Some(parent) = Path::new(&global.log.app_log_file).parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("Cannot create log directory {}", parent.display()))?;
     }
@@ -214,15 +313,22 @@ fn create_directories(global: &GlobalConfig, watchers: &[WatchConfig]) -> Result
             .with_context(|| format!("Cannot create output folder {}", watcher.output_folder))?;
     }
 
-    // Create embedded configs directory
-    fs::create_dir_all("config/watchs")
-        .with_context(|| "Cannot create config/watchs directory")?;
+    // Create embedded configs directory relative to config path
+    let watchs_dir = config_dir.join("watchs");
+    fs::create_dir_all(&watchs_dir).with_context(|| {
+        format!(
+            "Cannot create config/watchs directory at {}",
+            watchs_dir.display()
+        )
+    })?;
 
     Ok(())
 }
 
 /// Generate default config files on first run.
-fn generate_default_config(config_path: &Path) -> Result<(GlobalConfig, Vec<WatchConfig>, CodecRegistry)> {
+fn generate_default_config(
+    config_path: &Path,
+) -> Result<(GlobalConfig, Vec<WatchConfig>, CodecRegistry)> {
     let config_dir = config_path.parent().unwrap_or(Path::new("config"));
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let abs = cwd.canonicalize().unwrap_or(cwd);
@@ -234,6 +340,7 @@ fn generate_default_config(config_path: &Path) -> Result<(GlobalConfig, Vec<Watc
     let default_global = GlobalConfig {
         log: global::LogConfig {
             errors_file: logs_base.join("errors.log").to_string_lossy().to_string(),
+            app_log_file: logs_base.join("app.log").to_string_lossy().to_string(),
             ..Default::default()
         },
         healthcheck: global::HealthcheckConfig::default(),
@@ -265,9 +372,18 @@ fn generate_default_config(config_path: &Path) -> Result<(GlobalConfig, Vec<Watc
                     preset: "libx264".to_string(),
                     subfolder: None,
                     input_extensions: vec![
-                        ".mp4".into(), ".avi".into(), ".mkv".into(), ".mov".into(),
-                        ".webm".into(), ".flv".into(), ".wmv".into(), ".mpeg".into(),
-                        ".mpg".into(), ".ts".into(), ".mts".into(), ".mxf".into(),
+                        ".mp4".into(),
+                        ".avi".into(),
+                        ".mkv".into(),
+                        ".mov".into(),
+                        ".webm".into(),
+                        ".flv".into(),
+                        ".wmv".into(),
+                        ".mpeg".into(),
+                        ".mpg".into(),
+                        ".ts".into(),
+                        ".mts".into(),
+                        ".mxf".into(),
                     ],
                     output_ext: None,
                     codec: None,
@@ -294,7 +410,12 @@ fn generate_default_config(config_path: &Path) -> Result<(GlobalConfig, Vec<Watc
                 watch::VideoRule {
                     preset: "libx265_high".to_string(),
                     subfolder: Some("archive".to_string()),
-                    input_extensions: vec![".mxf".into(), ".mts".into(), ".mov".into(), ".mkv".into()],
+                    input_extensions: vec![
+                        ".mxf".into(),
+                        ".mts".into(),
+                        ".mov".into(),
+                        ".mkv".into(),
+                    ],
                     output_ext: None,
                     codec: None,
                     quality: None,
@@ -312,7 +433,8 @@ fn generate_default_config(config_path: &Path) -> Result<(GlobalConfig, Vec<Watc
     let outputs_str = outputs_base.display();
     let logs_str = logs_base.display();
 
-    let default_yaml = format!(r#"# ─────────────────────────────────────────────────────────────
+    let default_yaml = format!(
+        r#"# ─────────────────────────────────────────────────────────────
 # ConvWatcher — Configuração Padrão
 # Gerada automaticamente na primeira execução.
 # ─────────────────────────────────────────────────────────────
@@ -353,10 +475,10 @@ global:
   # Default: 5m
   refresh_interval: 5m
 
-  # Secret para validação de configs embutidas (embedded overrides).
-  # Se vazio, embedded configs são aceitas sem validação de secret.
-  # Default: ""
-  embedded_secret: ""
+  # Secret para validação de configs embutidas (embedded overrides) e agents remotos.
+  # GERADO AUTOMATICAMENTE na primeira execução. Guarde-o com segurança.
+  # Para regenerar: delete a linha e reinicie (ou edite manualmente).
+  embedded_secret: {secret}
 
   # Intervalo de scan para configs embutidas nas pastas monitoradas.
   # 0 = desabilita scan de embedded configs.
@@ -376,6 +498,16 @@ global:
     # O diretório é criado automaticamente se não existir.
     # Default: {logs}/errors.log
     errors_file: {logs}/errors.log
+
+    # Caminho absoluto do arquivo de log da aplicação (conversions, info).
+    # O diretório é criado automaticamente se não existir.
+    # Default: {logs}/app.log
+    app_log_file: {logs}/app.log
+
+    # Redact secrets from error logs to prevent credential leaks.
+    # When true, replaces embedded_secret values and patterns like password=, token= with ***REDACTED***.
+    # Default: true
+    redact_secrets: true
 
     # Número máximo de arquivos de log rotacionados a manter.
     # Default: 30
@@ -502,6 +634,7 @@ watchers:
         inputs = inputs_str,
         outputs = outputs_str,
         logs = logs_str,
+        secret = generate_secret(),
     );
 
     fs::write(config_path, &default_yaml)
@@ -519,7 +652,7 @@ watchers:
 
     // Validate and create directories
     validate_config(&default_global, &resolved)?;
-    create_directories(&default_global, &resolved)?;
+    create_directories(&default_global, &resolved, config_dir)?;
 
     Ok((default_global, resolved, registry))
 }
@@ -1200,6 +1333,7 @@ mod tests {
         GlobalConfig {
             log: global::LogConfig {
                 errors_file: "/app/logs/errors.log".to_string(),
+                app_log_file: "/app/logs/app.log".to_string(),
                 ..Default::default()
             },
             history: global::HistoryConfig {
@@ -1218,9 +1352,7 @@ mod tests {
             subfolders: Vec::new(),
             watch_folder: String::new(),
             output_folder: "/app/outputs/test/".to_string(),
-            watch_type: WatchType::Video {
-                rules: vec![],
-            },
+            watch_type: WatchType::Video { rules: vec![] },
         }];
         let result = validate_config(&global, &watchers);
         assert!(result.is_err());
@@ -1236,9 +1368,7 @@ mod tests {
             subfolders: Vec::new(),
             watch_folder: "/app/inputs/test/".to_string(),
             output_folder: String::new(),
-            watch_type: WatchType::Video {
-                rules: vec![],
-            },
+            watch_type: WatchType::Video { rules: vec![] },
         }];
         let result = validate_config(&global, &watchers);
         assert!(result.is_err());
@@ -1318,9 +1448,13 @@ mod tests {
                         preset: "libx264".to_string(),
                         subfolder: None,
                         input_extensions: vec![".mp4".into()],
-                        output_ext: None, codec: None, quality: None,
-                        audio_codec: None, audio_bitrate: None,
-                        output_name: None, check_duration: None,
+                        output_ext: None,
+                        codec: None,
+                        quality: None,
+                        audio_codec: None,
+                        audio_bitrate: None,
+                        output_name: None,
+                        check_duration: None,
                         min_duration_ratio: None,
                     }],
                 },
@@ -1335,7 +1469,9 @@ mod tests {
                         preset: "jpeg_80".to_string(),
                         subfolder: None,
                         input_extensions: vec![".tiff".into()],
-                        output_ext: None, quality: None, transparent: None,
+                        output_ext: None,
+                        quality: None,
+                        transparent: None,
                         output_name: None,
                     }],
                 },
@@ -1350,8 +1486,12 @@ mod tests {
                         preset: "mp3_192".to_string(),
                         subfolder: None,
                         input_extensions: vec![".wav".into()],
-                        output_ext: None, audio_codec: None, audio_bitrate: None,
-                        sample_rate: None, channels: None, output_name: None,
+                        output_ext: None,
+                        audio_codec: None,
+                        audio_bitrate: None,
+                        sample_rate: None,
+                        channels: None,
+                        output_name: None,
                     }],
                 },
             },
@@ -1365,8 +1505,12 @@ mod tests {
                         preset: "pdf_ebook".to_string(),
                         subfolder: None,
                         input_extensions: vec![".pdf".into()],
-                        output_ext: None, mode: None, quality: None,
-                        pdfa_version: None, resolution: None, password: None,
+                        output_ext: None,
+                        mode: None,
+                        quality: None,
+                        pdfa_version: None,
+                        resolution: None,
+                        password: None,
                         output_name: None,
                     }],
                 },
@@ -1381,9 +1525,15 @@ mod tests {
                         preset: "docx_to_pdf".to_string(),
                         subfolder: None,
                         input_extensions: vec![".docx".into()],
-                        output_ext: None, toc: None, toc_depth: None,
-                        css: None, template: None, standalone: None,
-                        metadata: None, pdf_engine: None, options: None,
+                        output_ext: None,
+                        toc: None,
+                        toc_depth: None,
+                        css: None,
+                        template: None,
+                        standalone: None,
+                        metadata: None,
+                        pdf_engine: None,
+                        options: None,
                         output_name: None,
                     }],
                 },
@@ -1398,7 +1548,9 @@ mod tests {
                         preset: "handbrake".to_string(),
                         subfolder: None,
                         input_extensions: vec![".mkv".into()],
-                        output_ext: None, command: None, output_name: None,
+                        output_ext: None,
+                        command: None,
+                        output_name: None,
                         description: None,
                     }],
                 },
@@ -1406,5 +1558,41 @@ mod tests {
         ];
         let result = validate_config(&global, &watchers);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_generated_default_config_is_reparseable() {
+        // Regression: the generated config.yaml template must parse back on the
+        // next startup. A broken template (wrong indentation for `global` /
+        // `log` / watcher fields) used to kill the process on run #2.
+        let tmp = std::env::temp_dir().join(format!("cw-gencfg-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let config_path = tmp.join("config.yaml");
+
+        let (global, watchers, _registry) =
+            generate_default_config(&config_path).expect("template generation must succeed");
+        assert_eq!(watchers.len(), 1);
+        assert_eq!(global.log.errors_file, global.log.errors_file);
+
+        // Round-trip: the YAML written by generate_default_config must parse.
+        let content = std::fs::read_to_string(&config_path).unwrap();
+
+        #[derive(serde::Deserialize)]
+        struct ConfigFile {
+            global: Option<GlobalConfig>,
+            watchers: Vec<WatchConfig>,
+        }
+        let parsed: ConfigFile = serde_yaml::from_str(&content).unwrap_or_else(|e| {
+            panic!("generated config must parse back (Bug A regression): {}", e)
+        });
+        let g = parsed.global.unwrap_or_default();
+        assert!(
+            g.log.errors_file.starts_with('/'),
+            "log.errors_file must be absolute, got {}",
+            g.log.errors_file
+        );
+        assert_eq!(parsed.watchers.len(), 1);
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

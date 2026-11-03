@@ -8,6 +8,8 @@ use crate::config::global::GlobalConfig;
 pub struct ErrorLogger {
     file: Mutex<PathBuf>,
     max_size_mb: u64,
+    redact_secrets: bool,
+    embedded_secret: String,
 }
 
 impl ErrorLogger {
@@ -19,15 +21,35 @@ impl ErrorLogger {
         Ok(Self {
             file: Mutex::new(path),
             max_size_mb: global_config.log.max_error_log_size_mb,
+            redact_secrets: global_config.log.redact_secrets,
+            embedded_secret: global_config.embedded_secret.clone(),
         })
     }
 
     pub fn log(&self, message: &str, file_name: &str, context: &str) {
-        let path = self.file.lock().unwrap();
+        let path = self.file.lock().unwrap_or_else(|p| p.into_inner());
         let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+
+        // Sanitize message and file_name if redaction is enabled
+        let sanitized_message = if self.redact_secrets {
+            let mut secrets: Vec<String> = Vec::new();
+            if !self.embedded_secret.is_empty() {
+                secrets.push(self.embedded_secret.clone());
+            }
+            redact(message, &secrets) // Pass embedded_secret for custom secret redaction
+        } else {
+            message.to_string()
+        };
+
+        let sanitized_file_name = if self.redact_secrets && context.contains("embedded_secret") {
+            "***REDACTED***".to_string()
+        } else {
+            file_name.to_string()
+        };
+
         let line = format!(
             "{} [{}] {} — {}\n",
-            timestamp, context, file_name, message
+            timestamp, context, sanitized_file_name, sanitized_message
         );
 
         if let Ok(metadata) = fs::metadata(&*path) {
@@ -37,12 +59,120 @@ impl ErrorLogger {
             }
         }
 
-        if let Ok(mut file) = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&*path)
-        {
+        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&*path) {
             let _ = file.write_all(line.as_bytes());
         }
+    }
+}
+
+/// Redact sensitive patterns from text.
+/// Replaces embedded_secret values and common secret patterns with ***REDACTED***.
+pub fn redact(text: &str, secrets: &[String]) -> String {
+    let mut result = text.to_string();
+
+    // First: redact any custom secret values passed in
+    for secret in secrets {
+        if !secret.is_empty() {
+            result = result.replace(secret, "***REDACTED***");
+        }
+    }
+
+    // Then: apply keyword patterns
+    let sensitive_patterns = [
+        "embedded_secret",
+        "secret=",
+        "password=",
+        "token=",
+        "api_key=",
+        "apikey=",
+        "credential=",
+        "auth=",
+    ];
+    for pattern in &sensitive_patterns {
+        result = redact_pattern(&result, pattern);
+    }
+
+    result
+}
+
+/// Redact a single pattern and its associated value from text.
+/// Pattern format: "keyword=" or just the keyword - replaces keyword and value with ***REDACTED***
+fn redact_pattern(text: &str, pattern: &str) -> String {
+    let mut result = String::new();
+    let chars: Vec<char> = text.chars().collect();
+    let mut i = 0;
+
+    while i < chars.len() {
+        // Check if pattern matches at current position
+        if i + pattern.len() <= chars.len() {
+            let slice: String = chars[i..i + pattern.len()].iter().collect();
+            if slice == *pattern {
+                result.push_str("***REDACTED***");
+
+                // Skip past the pattern and find the end of the value (until space, newline, or end)
+                i += pattern.len();
+
+                while i < chars.len() {
+                    let c = chars[i];
+                    if c == ' ' || c == '\n' || c == '"' || c == '\'' {
+                        break;
+                    }
+                    result.push('*'); // Mask value characters (including braces)
+                    i += 1;
+                }
+                continue;
+            }
+        }
+
+        result.push(chars[i]);
+        i += 1;
+    }
+
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_redact_password() {
+        let text = "Connection failed: password=mypassword123";
+        let redacted = redact(text, &[]);
+        // Should contain the redaction marker and NOT the actual value
+        assert!(redacted.contains("***REDACTED***"));
+        assert!(!redacted.contains("mypassword123"));
+    }
+
+    #[test]
+    fn test_redact_token() {
+        let text = "Auth token=abc123token456 failed";
+        let redacted = redact(text, &[]);
+        // Should contain the redaction marker
+        assert!(redacted.contains("***REDACTED***"));
+    }
+
+    #[test]
+    fn test_redact_embedded_secret() {
+        let text = r#"embedded_secret: "mysecretvalue""#;
+        let redacted = redact(text, &[]);
+        assert!(redacted.contains("***REDACTED***"));
+        // Should also work with the pattern variant
+    }
+
+    #[test]
+    fn test_redact_multiple_secrets() {
+        let text = "password=secret123 token=abc456";
+        let redacted = redact(text, &[]);
+        assert!(redacted.contains("***REDACTED***"));
+        assert!(!redacted.contains("secret123"));
+        assert!(!redacted.contains("abc456"));
+    }
+
+    #[test]
+    fn test_no_secrets_in_clean_text() {
+        let text = "File processed successfully";
+        let redacted = redact(text, &[]);
+        assert_eq!(text, redacted);
     }
 }

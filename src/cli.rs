@@ -1,4 +1,5 @@
 use clap::Parser;
+use std::fmt;
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
@@ -27,6 +28,17 @@ pub enum LogLevel {
     Info,
     Warn,
     Error,
+}
+
+impl fmt::Display for LogLevel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            LogLevel::Debug => write!(f, "debug"),
+            LogLevel::Info => write!(f, "info"),
+            LogLevel::Warn => write!(f, "warn"),
+            LogLevel::Error => write!(f, "error"),
+        }
+    }
 }
 
 impl LogLevel {

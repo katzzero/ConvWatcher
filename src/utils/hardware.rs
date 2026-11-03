@@ -1,7 +1,7 @@
 use std::process::Stdio;
 use tokio::process::Command;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct HardwareAccelInfo {
     pub ffmpeg_vaapi_support: bool,
     pub vaapi_available: bool,
@@ -14,24 +14,6 @@ pub struct HardwareAccelInfo {
     pub rkmpp_available: bool,
     pub rkmpp_encoders: Vec<String>,
     pub all_encoders: Vec<String>,
-}
-
-impl Default for HardwareAccelInfo {
-    fn default() -> Self {
-        Self {
-            ffmpeg_vaapi_support: false,
-            vaapi_available: false,
-            vaapi_encoders: Vec::new(),
-            vaapi_devices: Vec::new(),
-            nvenc_available: false,
-            nvenc_encoders: Vec::new(),
-            qsv_available: false,
-            qsv_encoders: Vec::new(),
-            rkmpp_available: false,
-            rkmpp_encoders: Vec::new(),
-            all_encoders: Vec::new(),
-        }
-    }
 }
 
 pub async fn check_hardware_accel(ffmpeg_path: &str) -> HardwareAccelInfo {
@@ -67,11 +49,7 @@ pub async fn check_hardware_accel(ffmpeg_path: &str) -> HardwareAccelInfo {
         if let Ok(entries) = std::fs::read_dir("/dev/dri") {
             info.vaapi_devices = entries
                 .filter_map(|e| e.ok())
-                .filter_map(|e| {
-                    e.file_name()
-                        .to_str()
-                        .map(|s| format!("/dev/dri/{}", s))
-                })
+                .filter_map(|e| e.file_name().to_str().map(|s| format!("/dev/dri/{}", s)))
                 .collect();
             info.vaapi_available = !info.vaapi_devices.is_empty();
         }
