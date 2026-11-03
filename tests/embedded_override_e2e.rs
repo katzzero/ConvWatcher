@@ -283,7 +283,7 @@ fn embedded_override_valid_promoted_to_watchs() {
         "Valid override was not promoted to config/watchs/. \
         Expected at: {:?}. \
       Watch folder contents: {:?}",
-        &promoted_file,
+        promoted_file,
         std::fs::read_dir(&watch_folder)
             .ok()
             .map(|d| d.filter_map(|e| e.ok()).collect::<Vec<_>>())
@@ -393,7 +393,7 @@ fn embedded_override_wrong_secret_rejected() {
         has_marker,
         "An .invalid marker should exist when an override is rejected. \
            Checked: {:?}",
-        &invalid_marker
+        invalid_marker
     );
 
     let _ = std::fs::remove_dir_all(&tmp);
@@ -493,7 +493,7 @@ fn embedded_override_type_mismatch_rejected() {
         has_marker,
         "An .invalid marker should exist when a type-mismatch override is rejected. \
             Checked: {:?}",
-        &invalid_marker
+        invalid_marker
     );
 
     let _ = std::fs::remove_dir_all(&tmp);
