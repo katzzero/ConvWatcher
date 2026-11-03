@@ -916,6 +916,26 @@ mod scan_tests {
         assert!(!is_unchanged_processed(&processed, &path, 10, None));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn collect_scan_files_skips_symlink_loops() {
+        use std::os::unix::fs::symlink;
+        let root = std::env::temp_dir().join(format!("cw_symlink_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("file.mp4"), b"x").unwrap();
+        symlink(&root, root.join("loop")).unwrap();
+
+        let files = collect_scan_files(&root);
+        let names: Vec<String> = files
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(names, vec!["file.mp4".to_string()]);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn subfolder_matching_is_case_insensitive() {
         let config = super::tests::test_video_config();

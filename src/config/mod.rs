@@ -23,14 +23,17 @@ const CONFIG_PATH: &str = "config/config.yaml";
 /// If a custom path is provided, returns its parent directory.
 /// Otherwise, returns the default "config" directory.
 pub fn config_dir_for(custom_path: Option<&Path>) -> PathBuf {
-    custom_path
-        .map(|p| p.parent().unwrap_or(Path::new("config")).to_path_buf())
-        .unwrap_or_else(|| {
-            PathBuf::from(CONFIG_PATH)
-                .parent()
-                .unwrap_or(Path::new("config"))
-                .to_path_buf()
-        })
+    match custom_path {
+        Some(path) => path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf(),
+        None => PathBuf::from(CONFIG_PATH)
+            .parent()
+            .unwrap_or_else(|| Path::new("config"))
+            .to_path_buf(),
+    }
 }
 
 /// Secure file permissions: 600 (owner read/write only)
@@ -1715,6 +1718,12 @@ mod tests {
     fn test_config_dir_for_default() {
         let config_dir = config_dir_for(None);
         assert!(config_dir.is_dir() || config_dir.ends_with("config"));
+    }
+
+    #[test]
+    fn test_config_dir_for_relative_filename() {
+        let dir = config_dir_for(Some(std::path::Path::new("config.yaml")));
+        assert_eq!(dir, std::path::PathBuf::from("."));
     }
 
     #[test]
