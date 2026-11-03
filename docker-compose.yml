@@ -23,8 +23,12 @@ services:
       - /dev/dri:/dev/dri
     environment:
       - RUST_LOG=info
+    # Health server is bound to 127.0.0.1 by default (see config).
+    # This mapping exposes it on the host loopback for local access only.
+    # WARNING: If you change the bind_address in config to 0.0.0.0, this port
+    # will be publicly accessible - ensure proper auth is configured.
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     deploy:
       resources:
         limits:

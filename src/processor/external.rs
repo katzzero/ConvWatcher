@@ -143,6 +143,14 @@ async fn execute_custom(
 
 /// Binaries permitted in custom rules. Using a fixed allowlist prevents
 /// arbitrary code execution via embedded override injection.
+///
+/// SECURITY NOTE: The following binaries were removed from the allowlist
+/// due to RCE vulnerabilities:
+/// - `convert` and `magick` (ImageMagick): Allow reading arbitrary files via
+///   the caption:@ syntax (e.g., `caption:@/etc/passwd`), enabling path traversal
+///   and arbitrary file read outside the intended conversion workflow.
+/// - `identify` (ImageMagick): Also vulnerable to similar path traversal via
+///   command injection in certain contexts.
 const ALLOWED_BINARIES: &[&str] = &[
     "ffmpeg",
     "ffprobe",
@@ -156,9 +164,6 @@ const ALLOWED_BINARIES: &[&str] = &[
     "pdftoppm",
     "pdfinfo",
     "img2pdf",
-    "convert",
-    "magick",
-    "identify", // ImageMagick
     "HandBrakeCLI",
     "sox",
     "soxi",

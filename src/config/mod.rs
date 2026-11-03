@@ -3,6 +3,9 @@ pub mod embedded;
 pub mod global;
 pub mod watch;
 
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
+
 use rand::Rng;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -16,6 +19,14 @@ use watch::{WatchConfig, WatchType};
 
 const CONFIG_PATH: &str = "config/config.yaml";
 
+/// Secure file permissions: 600 (owner read/write only)
+#[cfg(unix)]
+const SECURE_FILE_MODE: u32 = 0o600;
+
+/// Secure directory permissions: 700 (owner read/write/execute only)
+#[cfg(unix)]
+const SECURE_DIR_MODE: u32 = 0o700;
+
 /// Maximum config file size (2 MiB) to prevent DoS attacks.
 const MAX_CONFIG_BYTES: u64 = 2 * 1024 * 1024;
 
@@ -25,6 +36,40 @@ fn generate_secret() -> String {
     (0..32)
         .map(|_| format!("{:02x}", rng.gen::<u8>()))
         .collect()
+}
+
+#[cfg(unix)]
+fn write_secure_file(path: &Path, content: &str) -> Result<()> {
+    use std::fs::OpenOptions;
+    let mut file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .mode(SECURE_FILE_MODE)
+        .open(path)
+        .with_context(|| format!("Cannot create file {}", path.display()))?;
+    std::io::Write::write_all(&mut file, content.as_bytes())
+        .with_context(|| format!("Cannot write to {}", path.display()))?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn write_secure_file(path: &Path, content: &str) -> Result<()> {
+    fs::write(path, content).with_context(|| format!("Cannot write to {}", path.display()))
+}
+
+#[cfg(unix)]
+fn set_secure_dir_mode(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let perms = std::fs::Permissions::from_mode(SECURE_DIR_MODE);
+    std::fs::set_permissions(path, perms)
+        .with_context(|| format!("Cannot set permissions on {}", path.display()))?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn set_secure_dir_mode(_path: &Path) -> Result<()> {
+    Ok(())
 }
 
 /// Load all configuration from a single config.yaml file.
@@ -637,9 +682,12 @@ watchers:
         secret = generate_secret(),
     );
 
-    fs::write(config_path, &default_yaml)
+    write_secure_file(config_path, &default_yaml)
         .with_context(|| format!("Cannot write {}", config_path.display()))?;
     info!("Created default config: {}", config_path.display());
+
+    // Set secure permissions on config directory
+    set_secure_dir_mode(config_dir)?;
 
     // Generate codec preset files
     generate_preset_files(config_dir)?;
@@ -661,7 +709,7 @@ fn generate_preset_files(config_dir: &Path) -> Result<()> {
     // Generate video_codecs.yaml
     let video_path = config_dir.join("video_codecs.yaml");
     if !video_path.exists() {
-        fs::write(&video_path, DEFAULT_VIDEO_PRESETS)
+        write_secure_file(&video_path, DEFAULT_VIDEO_PRESETS)
             .with_context(|| format!("Cannot write {}", video_path.display()))?;
         info!("Created default video presets: {}", video_path.display());
     }
@@ -669,7 +717,7 @@ fn generate_preset_files(config_dir: &Path) -> Result<()> {
     // Generate audio_codecs.yaml
     let audio_path = config_dir.join("audio_codecs.yaml");
     if !audio_path.exists() {
-        fs::write(&audio_path, DEFAULT_AUDIO_PRESETS)
+        write_secure_file(&audio_path, DEFAULT_AUDIO_PRESETS)
             .with_context(|| format!("Cannot write {}", audio_path.display()))?;
         info!("Created default audio presets: {}", audio_path.display());
     }
@@ -677,7 +725,7 @@ fn generate_preset_files(config_dir: &Path) -> Result<()> {
     // Generate image_codecs.yaml
     let image_path = config_dir.join("image_codecs.yaml");
     if !image_path.exists() {
-        fs::write(&image_path, DEFAULT_IMAGE_PRESETS)
+        write_secure_file(&image_path, DEFAULT_IMAGE_PRESETS)
             .with_context(|| format!("Cannot write {}", image_path.display()))?;
         info!("Created default image presets: {}", image_path.display());
     }
@@ -685,7 +733,7 @@ fn generate_preset_files(config_dir: &Path) -> Result<()> {
     // Generate pdf_presets.yaml
     let pdf_path = config_dir.join("pdf_presets.yaml");
     if !pdf_path.exists() {
-        fs::write(&pdf_path, DEFAULT_PDF_PRESETS)
+        write_secure_file(&pdf_path, DEFAULT_PDF_PRESETS)
             .with_context(|| format!("Cannot write {}", pdf_path.display()))?;
         info!("Created default PDF presets: {}", pdf_path.display());
     }
@@ -693,7 +741,7 @@ fn generate_preset_files(config_dir: &Path) -> Result<()> {
     // Generate document_presets.yaml
     let doc_path = config_dir.join("document_presets.yaml");
     if !doc_path.exists() {
-        fs::write(&doc_path, DEFAULT_DOCUMENT_PRESETS)
+        write_secure_file(&doc_path, DEFAULT_DOCUMENT_PRESETS)
             .with_context(|| format!("Cannot write {}", doc_path.display()))?;
         info!("Created default document presets: {}", doc_path.display());
     }
@@ -701,7 +749,7 @@ fn generate_preset_files(config_dir: &Path) -> Result<()> {
     // Generate custom_presets.yaml
     let custom_path = config_dir.join("custom_presets.yaml");
     if !custom_path.exists() {
-        fs::write(&custom_path, DEFAULT_CUSTOM_PRESETS)
+        write_secure_file(&custom_path, DEFAULT_CUSTOM_PRESETS)
             .with_context(|| format!("Cannot write {}", custom_path.display()))?;
         info!("Created default custom presets: {}", custom_path.display());
     }
@@ -1305,10 +1353,10 @@ presets:
     output_ext: .mp4
     description: "HandBrake CLI — Fast 1080p30 preset"
 
-  imagemagick:
-    command: "convert {input} {output}"
-    output_ext: .png
-    description: "ImageMagick convert"
+  # NOTE: The 'imagemagick' preset was removed due to RCE vulnerability.
+  # ImageMagick's 'convert' and 'magick' binaries allow arbitrary file read
+  # via the caption:@ DSL syntax (e.g., caption:@/etc/passwd).
+  # Use alternative image processing tools or custom commands instead.
 
   ghostscript_compress:
     command: "gs -sDEVICE=pdfwrite -dCompatibilityLevel=1.4 -dPDFSETTINGS=/ebook -o {output} {input}"

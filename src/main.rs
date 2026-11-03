@@ -137,7 +137,7 @@ async fn run() -> Result<()> {
     let processing_files: Arc<TokioMutex<HashSet<PathBuf>>> =
         Arc::new(TokioMutex::new(HashSet::new()));
 
-    let (monitor_shutdown_tx, _) = broadcast::channel::<()>(1);
+    let (monitor_shutdown_tx, _) = broadcast::channel::<()>(8);
 
     let global_for_reloader = global_config.clone();
     let disk_config_clone = global_config.disk_space.clone();
@@ -294,7 +294,9 @@ async fn run() -> Result<()> {
     let _ = mgmt_handle.await;
 
     config_reload_handle.abort();
+    let _ = config_reload_handle.await;
     embedded_scanner_handle.abort();
+    let _ = embedded_scanner_handle.await;
     drop(reload_tx);
 
     drop(job_tx);
@@ -302,7 +304,9 @@ async fn run() -> Result<()> {
 
     health_server.stop();
     health_handle.abort();
+    let _ = health_handle.await;
     disk_handle.abort();
+    let _ = disk_handle.await;
 
     info!("ConvWatcher stopped");
     Ok(())
@@ -429,7 +433,7 @@ async fn monitor_manager(
     processing_files: Arc<TokioMutex<HashSet<PathBuf>>>,
     mut shutdown_rx: broadcast::Receiver<()>,
 ) {
-    let mut generation_tx = broadcast::channel::<()>(1).0;
+    let mut generation_tx = broadcast::channel::<()>(8).0;
     let mut current_handles = spawn_monitors(
         initial_configs,
         &job_tx,
@@ -456,7 +460,7 @@ async fn monitor_manager(
                     health_server.add_watcher_with_config(cfg).await;
                 }
 
-                generation_tx = broadcast::channel::<()>(1).0;
+                generation_tx = broadcast::channel::<()>(8).0;
                 current_handles = spawn_monitors(
                     new_configs,
                     &job_tx,

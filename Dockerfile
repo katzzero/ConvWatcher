@@ -196,16 +196,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 FROM runtime-${TARGETARCH}
 
+# Create non-root user 'cw' for security (no home directory).
+RUN useradd -r -s /bin/false --no-create-home cw
+
 WORKDIR /app
 
 COPY --from=builder /convwatcher /usr/local/bin/convwatcher
 
-RUN mkdir -p /app/config /app/inputs /app/outputs /app/logs
+RUN mkdir -p /app/config /app/inputs /app/outputs /app/logs && \
+    chown -R cw:cw /app
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:8080/health || exit 1
 
 EXPOSE 8080
+
+USER cw
 
 ENTRYPOINT ["convwatcher"]
 CMD ["--no-daemon"]

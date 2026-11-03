@@ -80,50 +80,6 @@ fn write_presets(config_dir: &std::path::Path) {
     }
 }
 
-/// Build a minimal `config.yaml` with one video watcher, empty embedded_secret,
-/// fast intervals. The YAML is deliberately formatted to match serde_yaml
-/// expectations (list items at column 0 with sub-fields indented +2).
-fn build_config_no_secret(watch: &str, output: &str, logs: &str) -> String {
-    let ffmpeg = ffmpeg_path();
-    format!(
-        r#"global:
-  file_check_interval: 200ms
-  stable_time: 500ms
-  ffmpeg_path: {ffmpeg}
-  max_concurrent: 1
-  refresh_interval: 1s
-  embedded_secret: ""
-  embedded_scan_interval: 1
-
-  log:
-    errors_file: {logs_p}/errors.log
-    app_log_file: {logs_p}/app.log
-
-  healthcheck:
-    http_port: 0
-
-  disk_space:
-    check_interval: 60s
-    threshold: 500
-
-  history:
-    persistent: false
-    file: {logs_p}/history.json
-    max_records: 50
-
-watchers:
-- name: test_watcher
-  watch_folder: {watch}
-  output_folder: {output}
-  type: video
-  rules:
-    - input_extensions: [.mp4, .mkv]
-      preset: libx264
-"#,
-        logs_p = logs,
-    )
-}
-
 /// Build config with a non-empty embedded_secret.
 fn build_config_with_secret(
     secret: &str,
@@ -241,7 +197,9 @@ fn embedded_override_valid_promoted_to_watchs() {
 
     write_presets(&config_dir);
 
-    let config_yaml = build_config_no_secret(watch, output, logs_p);
+    // Use a non-empty secret since empty embedded_secret now rejects watch folder overrides
+    let secret = "testsecret123";
+    let config_yaml = build_config_with_secret(secret, "test_watcher", watch, output, logs_p);
     let config_path = config_dir.join("config.yaml");
     std::fs::write(&config_path, &config_yaml).unwrap();
 
@@ -262,9 +220,9 @@ fn embedded_override_valid_promoted_to_watchs() {
     // Give the process time to load config and start monitoring.
     std::thread::sleep(Duration::from_secs(2));
 
-    // Drop a valid override into the watch folder.
+    // Drop a valid override into the watch folder with matching secret.
     let override_path = watch_folder.join("test_watcher.yaml");
-    std::fs::write(&override_path, valid_video_override(""))
+    std::fs::write(&override_path, valid_video_override(secret))
         .expect("failed to write override file");
 
     // Poll for promotion: file should appear in config/watchs/.

@@ -32,9 +32,6 @@ presets:
     # Default: "" | Opcional
     description: "HandBrake — x264 CRF 22, AAC 128k"
 
-  # Nome do preset. Referenciado em watcher rules como preset: handbrake_nvenc.
-  # Formato: string (letras, números e underscores)
-  # Sem default | Requerido (é a chave do preset)
   handbrake_nvenc:
     # Comando shell a ser executado. Placeholders: {input} = arquivo de entrada, {output} = arquivo de saída.
     # Formato: string com placeholders {input} e {output}
@@ -51,9 +48,6 @@ presets:
     # Default: "" | Opcional
     description: "HandBrake — NVENC H.264, AAC 128k"
 
-  # Nome do preset. Referenciado em watcher rules como preset: handbrake_hevc.
-  # Formato: string (letras, números e underscores)
-  # Sem default | Requerido (é a chave do preset)
   handbrake_hevc:
     # Comando shell a ser executado. Placeholders: {input} = arquivo de entrada, {output} = arquivo de saída.
     # Formato: string com placeholders {input} e {output}
@@ -70,82 +64,11 @@ presets:
     # Default: "" | Opcional
     description: "HandBrake — x265 CRF 28, AAC 128k"
 
-  # ── ImageMagick ──
-  # Nome do preset. Referenciado em watcher rules como preset: magick_resize_1080p.
-  # Formato: string (letras, números e underscores)
-  # Sem default | Requerido (é a chave do preset)
-  magick_resize_1080p:
-    # Comando shell a ser executado. Placeholders: {input} = arquivo de entrada, {output} = arquivo de saída.
-    # Formato: string com placeholders {input} e {output}
-    # Sem default | Requerido
-    command: "magick {input} -resize 1920x1080 -quality 85 {output}"
-
-    # Extensão do arquivo de saída (incluindo o ponto).
-    # Formato: string começando com "." (ex: .mp4, .jpg)
-    # Sem default | Requerido
-    output_ext: .jpg
-
-    # Descrição legível do preset. Usada em logs e relatórios.
-    # Formato: string livre
-    # Default: "" | Opcional
-    description: "ImageMagick — resize to 1080p, JPEG 85%"
-
-  # Nome do preset. Referenciado em watcher rules como preset: magick_resize_720p.
-  # Formato: string (letras, números e underscores)
-  # Sem default | Requerido (é a chave do preset)
-  magick_resize_720p:
-    # Comando shell a ser executado. Placeholders: {input} = arquivo de entrada, {output} = arquivo de saída.
-    # Formato: string com placeholders {input} e {output}
-    # Sem default | Requerido
-    command: "magick {input} -resize 1280x720 -quality 80 {output}"
-
-    # Extensão do arquivo de saída (incluindo o ponto).
-    # Formato: string começando com "." (ex: .mp4, .jpg)
-    # Sem default | Requerido
-    output_ext: .jpg
-
-    # Descrição legível do preset. Usada em logs e relatórios.
-    # Formato: string livre
-    # Default: "" | Opcional
-    description: "ImageMagick — resize to 720p, JPEG 80%"
-
-  # Nome do preset. Referenciado em watcher rules como preset: magick_thumbnail.
-  # Formato: string (letras, números e underscores)
-  # Sem default | Requerido (é a chave do preset)
-  magick_thumbnail:
-    # Comando shell a ser executado. Placeholders: {input} = arquivo de entrada, {output} = arquivo de saída.
-    # Formato: string com placeholders {input} e {output}
-    # Sem default | Requerido
-    command: "magick {input} -resize 320x240 -quality 75 {output}"
-
-    # Extensão do arquivo de saída (incluindo o ponto).
-    # Formato: string começando com "." (ex: .mp4, .jpg)
-    # Sem default | Requerido
-    output_ext: .jpg
-
-    # Descrição legível do preset. Usada em logs e relatórios.
-    # Formato: string livre
-    # Default: "" | Opcional
-    description: "ImageMagick — 320x240 thumbnail"
-
-  # Nome do preset. Referenciado em watcher rules como preset: magick_convert.
-  # Formato: string (letras, números e underscores)
-  # Sem default | Requerido (é a chave do preset)
-  magick_convert:
-    # Comando shell a ser executado. Placeholders: {input} = arquivo de entrada, {output} = arquivo de saída.
-    # Formato: string com placeholders {input} e {output}
-    # Sem default | Requerido
-    command: "magick {input} -quality 90 {output}"
-
-    # Extensão do arquivo de saída (incluindo o ponto).
-    # Formato: string começando com "." (ex: .mp4, .jpg)
-    # Sem default | Requerido
-    output_ext: .jpg
-
-    # Descrição legível do preset. Usada em logs e relatórios.
-    # Formato: string livre
-    # Default: "" | Opcional
-    description: "ImageMagick — format conversion with quality"
+  # ── ImageMagick (removed for security) ──
+  # ImageMagick binaries (convert/magick/identify) were removed from the
+  # allowlist: their DSL can read arbitrary files (e.g. caption:@/etc/passwd).
+  # If you need ImageMagick, re-add the binary to ALLOWED_BINARIES in
+  # src/processor/external.rs and accept the risk explicitly.
 
   # ── FFprobe / Media Info ──
   # Nome do preset. Referenciado em watcher rules como preset: ffprobe_json.

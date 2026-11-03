@@ -64,8 +64,8 @@ pub async fn run_file_monitor(
                 match event.kind {
                     EventKind::Create(_) | EventKind::Modify(_) => {
                         for path in event.paths {
-                            if path.is_file() {
-                                let _ = event_tx_clone.blocking_send(path);
+                            if path.is_file() && event_tx_clone.try_send(path).is_err() {
+                                warn!("Notify event channel full; dropping event");
                             }
                         }
                     }
@@ -80,7 +80,10 @@ pub async fn run_file_monitor(
             None => return,
         };
 
-    if let Err(e) = watcher.watch(&watch_dir, RecursiveMode::Recursive) {
+    if let Err(e) = // Non-recursive: subfolder files are picked up by the periodic
+        // `collect_scan_files` pass, which also avoids symlink loops.
+        watcher.watch(&watch_dir, RecursiveMode::NonRecursive)
+    {
         error!("Failed to watch {}: {}", watch_folder, e);
         return;
     }
@@ -223,6 +226,11 @@ async fn scan_directory(
                         file_states.remove(&path);
                         continue;
                     }
+                    if !path.exists() {
+                        processing_files.lock().await.remove(&path);
+                        file_states.remove(&path);
+                        continue;
+                    }
                     if let Some(job) = create_job(
                         &path,
                         &file_name,
@@ -347,22 +355,25 @@ fn validate_and_promote_config(config_path: &Path, manifest: &WatchConfig, globa
 
     if global.embedded_secret.is_empty() {
         warn!(
-            "SECURITY: accepting override {:?} without secret validation \
-             (embedded_secret is empty)",
+            "SECURITY: rejecting override {:?} from watch folder — \
+            embedded_secret is empty (secret validation required). \
+            Use config/watchs/ for manual admin overrides.",
             config_path
         );
-    } else {
-        let secrets_match = bool::from(
-            global
-                .embedded_secret
-                .as_bytes()
-                .ct_eq(embedded.secret.as_bytes()),
-        );
-        if !secrets_match {
-            warn!("Secret mismatch in {:?}", config_path);
-            create_invalid_marker(config_path, manifest);
-            return;
-        }
+        create_invalid_marker(config_path, manifest);
+        return;
+    }
+
+    let secrets_match = bool::from(
+        global
+            .embedded_secret
+            .as_bytes()
+            .ct_eq(embedded.secret.as_bytes()),
+    );
+    if !secrets_match {
+        warn!("Secret mismatch in {:?}", config_path);
+        create_invalid_marker(config_path, manifest);
+        return;
     }
 
     let expected_type = manifest.watch_type.type_name();
@@ -600,7 +611,7 @@ fn rule_subfolder_names(watch_type: &WatchType) -> Vec<&str> {
 }
 
 fn cleanup_stale_entries(file_states: &mut HashMap<PathBuf, FileState>, stable_time: Duration) {
-    let stale_threshold = stable_time * 10;
+    let stale_threshold = stable_time.saturating_mul(10);
     file_states.retain(|path, (first_seen, _)| {
         if !path.exists() {
             return false;

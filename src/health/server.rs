@@ -1,13 +1,21 @@
 use std::collections::HashMap;
+use std::io::Write;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 
 use anyhow::Result;
 use log::{error, info};
 
 use crate::config::watch::{WatchConfig, WatchType};
 use crate::utils::hardware::HardwareAccelInfo;
+
+/// Secure file permissions: 600 (owner read/write only)
+#[cfg(unix)]
+const SECURE_FILE_MODE: u32 = 0o600;
 
 pub struct HealthServer {
     port: u16,
@@ -176,7 +184,23 @@ impl HealthServer {
         if self.history_persistent {
             if let Some(ref file) = self.history_file {
                 if let Ok(json) = serde_json::to_string_pretty(&snapshot) {
-                    let _ = std::fs::write(file, json);
+                    #[cfg(unix)]
+                    {
+                        use std::fs::OpenOptions;
+                        if let Ok(mut fh) = OpenOptions::new()
+                            .create(true)
+                            .write(true)
+                            .truncate(true)
+                            .mode(SECURE_FILE_MODE)
+                            .open(file)
+                        {
+                            let _ = fh.write_all(json.as_bytes());
+                        }
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        let _ = std::fs::write(file, json);
+                    }
                 }
             }
         }

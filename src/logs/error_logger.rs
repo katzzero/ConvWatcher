@@ -3,7 +3,18 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
 use crate::config::global::GlobalConfig;
+
+/// Secure file permissions: 600 (owner read/write only)
+#[cfg(unix)]
+const SECURE_FILE_MODE: u32 = 0o600;
+
+/// Secure directory permissions: 700 (owner read/write/execute only)
+#[cfg(unix)]
+const SECURE_DIR_MODE: u32 = 0o700;
 
 pub struct ErrorLogger {
     file: Mutex<PathBuf>,
@@ -16,7 +27,17 @@ impl ErrorLogger {
     pub fn new(global_config: &GlobalConfig) -> Result<Self, std::io::Error> {
         let path = PathBuf::from(&global_config.log.errors_file);
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
+            #[cfg(unix)]
+            {
+                fs::create_dir_all(parent)?;
+                // Set secure permissions on the log directory
+                let perms = fs::Permissions::from_mode(SECURE_DIR_MODE);
+                let _ = fs::set_permissions(parent, perms);
+            }
+            #[cfg(not(unix))]
+            {
+                fs::create_dir_all(parent)?;
+            }
         }
         Ok(Self {
             file: Mutex::new(path),
@@ -59,8 +80,22 @@ impl ErrorLogger {
             }
         }
 
-        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&*path) {
-            let _ = file.write_all(line.as_bytes());
+        #[cfg(unix)]
+        {
+            if let Ok(mut file) = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .mode(SECURE_FILE_MODE)
+                .open(&*path)
+            {
+                let _ = file.write_all(line.as_bytes());
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&*path) {
+                let _ = file.write_all(line.as_bytes());
+            }
         }
     }
 }
@@ -87,6 +122,7 @@ pub fn redact(text: &str, secrets: &[String]) -> String {
         "apikey=",
         "credential=",
         "auth=",
+        "etc",
     ];
     for pattern in &sensitive_patterns {
         result = redact_pattern(&result, pattern);
@@ -117,7 +153,6 @@ fn redact_pattern(text: &str, pattern: &str) -> String {
                     if c == ' ' || c == '\n' || c == '"' || c == '\'' {
                         break;
                     }
-                    result.push('*'); // Mask value characters (including braces)
                     i += 1;
                 }
                 continue;
@@ -174,5 +209,26 @@ mod tests {
         let text = "File processed successfully";
         let redacted = redact(text, &[]);
         assert_eq!(text, redacted);
+    }
+
+    #[test]
+    fn test_redact_replaces_entire_value_not_masked() {
+        // The value after the pattern should be replaced entirely, not masked character by character
+        let text = "password=verylongsecretvalue123";
+        let redacted = redact(text, &[]);
+        // Should be ***REDACTED*** followed by space or end, not *****************
+        assert!(redacted.contains("***REDACTED***"));
+        assert!(!redacted.contains("verylongsecretvalue123"));
+        // Verify no partial masking with asterisks
+        assert!(!redacted.contains("***************"));
+    }
+
+    #[test]
+    fn test_redact_etc_path() {
+        // Test that /etc/ paths are redacted
+        let text = "Reading file from /etc/passwd for processing";
+        let redacted = redact(text, &[]);
+        assert!(redacted.contains("***REDACTED***"));
+        assert!(!redacted.contains("/etc/passwd"));
     }
 }
