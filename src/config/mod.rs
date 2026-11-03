@@ -265,7 +265,7 @@ fn validate_config(global: &GlobalConfig, watchers: &[WatchConfig]) -> Result<()
     Ok(())
 }
 
-fn validate_absolute_path(path: &str, label: &str) -> Result<()> {
+pub(crate) fn validate_absolute_path(path: &str, label: &str) -> Result<()> {
     let p = Path::new(path);
     if !p.is_absolute() {
         anyhow::bail!(

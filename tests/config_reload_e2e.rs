@@ -392,3 +392,261 @@ fn invalid_config_does_not_crash_process() {
 
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+#[allow(clippy::too_many_arguments)]
+fn build_three_watcher_config(
+    ffmpeg_path: &str,
+    watch1: &str,
+    output1: &str,
+    watch2: &str,
+    output2: &str,
+    watch3: &str,
+    output3: &str,
+    logs: &str,
+) -> String {
+    format!(
+        r#"global:
+  file_check_interval: 200ms
+  stable_time: 500ms
+  ffmpeg_path: {}
+  max_concurrent: 1
+  refresh_interval: 1s
+  embedded_secret: ""
+  embedded_scan_interval: 0
+
+  log:
+    errors_file: {}/errors.log
+    app_log_file: {}/app.log
+
+  healthcheck:
+    http_port: 0
+
+  disk_space:
+    check_interval: 60s
+    threshold: 500
+
+  history:
+    persistent: false
+    file: {}/history.json
+    max_records: 50
+
+watchers:
+- name: initial_watcher
+  watch_folder: {}
+  output_folder: {}
+  type: video
+  rules:
+    - input_extensions: [.mp4]
+      preset: libx264
+- name: added_watcher
+  watch_folder: {}
+  output_folder: {}
+  type: video
+  rules:
+    - input_extensions: [.webm]
+      preset: libx264
+- name: third_watcher
+  watch_folder: {}
+  output_folder: {}
+  type: video
+  rules:
+    - input_extensions: [.mkv]
+      preset: libx264
+"#,
+        ffmpeg_path, logs, logs, logs, watch1, output1, watch2, output2, watch3, output3
+    )
+}
+
+#[test]
+fn config_hot_reload_twice_creates_third_folder() {
+    let bin = match convwatcher_bin() {
+        Some(p) => p,
+        None => {
+            eprintln!("convwatcher binary not found — skipping double reload test");
+            return;
+        }
+    };
+    if !ffmpeg_available() {
+        eprintln!("ffmpeg unavailable — skipping double reload test");
+        return;
+    }
+
+    let tmp = std::env::temp_dir().join(format!("cw-reload-twice-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&tmp);
+
+    let ffmpeg_path =
+        std::env::var("FFMPEG_PATH").unwrap_or_else(|_| "/opt/homebrew/bin/ffmpeg".to_string());
+
+    let config_dir = tmp.join("config");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    write_presets(&config_dir);
+    let config_path = config_dir.join("config.yaml");
+
+    let watch1 = tmp.join("watch_1").to_string_lossy().to_string();
+    let output1 = tmp.join("output_1").to_string_lossy().to_string();
+    let logs_dir = tmp.join("logs").to_string_lossy().to_string();
+    std::fs::write(
+        &config_path,
+        build_initial_config(&ffmpeg_path, &watch1, &output1, &logs_dir),
+    )
+    .unwrap();
+
+    let watch2 = tmp.join("watch_2").to_string_lossy().to_string();
+    let output2 = tmp.join("output_2").to_string_lossy().to_string();
+    let watch3 = tmp.join("watch_3").to_string_lossy().to_string();
+    let output3 = tmp.join("output_3").to_string_lossy().to_string();
+
+    let mut child = std::process::Command::new(&bin)
+        .args([
+            "--config",
+            config_path.to_str().unwrap(),
+            "--no-daemon",
+            "--level",
+            "warn",
+        ])
+        .current_dir(&tmp)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to spawn convwatcher");
+
+    std::thread::sleep(Duration::from_secs(2));
+
+    // First reload: add watcher 2.
+    std::fs::write(
+        &config_path,
+        build_reloaded_config(
+            &ffmpeg_path,
+            &watch1,
+            &output1,
+            &watch2,
+            &output2,
+            &logs_dir,
+        ),
+    )
+    .unwrap();
+    assert!(
+        poll(
+            || std::path::Path::new(&watch2).exists() && std::path::Path::new(&output2).exists(),
+            Duration::from_secs(15),
+            Duration::from_millis(300)
+        ),
+        "first hot-reload should create watcher 2 folders"
+    );
+    assert!(
+        child_alive(&mut child),
+        "process must survive the first reload"
+    );
+
+    // Second reload: add watcher 3. This hung before the shutdown_tx fix.
+    std::fs::write(
+        &config_path,
+        build_three_watcher_config(
+            &ffmpeg_path,
+            &watch1,
+            &output1,
+            &watch2,
+            &output2,
+            &watch3,
+            &output3,
+            &logs_dir,
+        ),
+    )
+    .unwrap();
+    let second_reload = poll(
+        || std::path::Path::new(&watch3).exists() && std::path::Path::new(&output3).exists(),
+        Duration::from_secs(15),
+        Duration::from_millis(300),
+    );
+    let alive = child_alive(&mut child);
+
+    let _ = child.kill();
+    let _ = child.wait();
+
+    assert!(
+        second_reload,
+        "second hot-reload should create watcher 3 folders"
+    );
+    assert!(alive, "process must survive the second reload");
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[cfg(unix)]
+#[test]
+fn sigterm_shuts_down_process_within_timeout() {
+    let bin = match convwatcher_bin() {
+        Some(p) => p,
+        None => {
+            eprintln!("convwatcher binary not found — skipping SIGTERM test");
+            return;
+        }
+    };
+    if !ffmpeg_available() {
+        eprintln!("ffmpeg unavailable — skipping SIGTERM test");
+        return;
+    }
+
+    let tmp = std::env::temp_dir().join(format!("cw-sigterm-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&tmp);
+
+    let ffmpeg_path =
+        std::env::var("FFMPEG_PATH").unwrap_or_else(|_| "/opt/homebrew/bin/ffmpeg".to_string());
+
+    let config_dir = tmp.join("config");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    write_presets(&config_dir);
+    let config_path = config_dir.join("config.yaml");
+
+    let watch1 = tmp.join("watch_1").to_string_lossy().to_string();
+    let output1 = tmp.join("output_1").to_string_lossy().to_string();
+    let logs_dir = tmp.join("logs").to_string_lossy().to_string();
+    std::fs::write(
+        &config_path,
+        build_initial_config(&ffmpeg_path, &watch1, &output1, &logs_dir),
+    )
+    .unwrap();
+
+    let mut child = std::process::Command::new(&bin)
+        .args([
+            "--config",
+            config_path.to_str().unwrap(),
+            "--no-daemon",
+            "--level",
+            "warn",
+        ])
+        .current_dir(&tmp)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to spawn convwatcher");
+
+    std::thread::sleep(Duration::from_secs(2));
+    assert!(
+        child_alive(&mut child),
+        "process should be running before SIGTERM"
+    );
+
+    let status = std::process::Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status()
+        .expect("failed to send SIGTERM");
+    assert!(status.success(), "kill -TERM should succeed");
+
+    let exited = poll(
+        || !child_alive(&mut child),
+        Duration::from_secs(15),
+        Duration::from_millis(200),
+    );
+
+    if !exited {
+        let _ = child.kill();
+    }
+    let _ = child.wait();
+
+    assert!(
+        exited,
+        "process must exit after SIGTERM (shutdown deadlock regression)"
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
+}

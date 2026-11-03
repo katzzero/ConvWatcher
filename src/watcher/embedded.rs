@@ -141,6 +141,13 @@ impl EmbeddedScanner {
         let content = std::fs::read_to_string(config_path)?;
         let embedded: EmbeddedConfig = serde_yaml::from_str(&content)?;
 
+        if !embedded.output_folder.is_empty() {
+            crate::config::validate_absolute_path(
+                &embedded.output_folder,
+                "override output_folder",
+            )?;
+        }
+
         if !self.secret.is_empty() {
             let secrets_match =
                 bool::from(self.secret.as_bytes().ct_eq(embedded.secret.as_bytes()));

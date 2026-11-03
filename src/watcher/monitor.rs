@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use log::{error, info, warn};
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
@@ -50,6 +50,9 @@ pub async fn run_file_monitor(
     }
 
     let mut file_states: HashMap<PathBuf, FileState> = HashMap::new();
+    // Signatures of files already enqueued with `input_file_action: none`.
+    // Without this, the file stays on disk and would be converted forever.
+    let mut processed_files: HashMap<PathBuf, (u64, Option<SystemTime>)> = HashMap::new();
 
     let (event_tx, mut event_rx) = mpsc::channel::<PathBuf>(100);
 
@@ -107,6 +110,7 @@ pub async fn run_file_monitor(
                 let _ = scan_directory(
                     &watch_path,
                     &mut file_states,
+                    &mut processed_files,
                     stable_time,
                     &current_config,
                     &watcher_name_owned,
@@ -125,6 +129,7 @@ pub async fn run_file_monitor(
 async fn scan_directory(
     watch_dir: &Path,
     file_states: &mut HashMap<PathBuf, FileState>,
+    processed_files: &mut HashMap<PathBuf, (u64, Option<SystemTime>)>,
     stable_time: Duration,
     config: &WatchConfig,
     watcher_name: &str,
@@ -133,26 +138,17 @@ async fn scan_directory(
     global_config: &GlobalConfig,
     processing_files: &Arc<TokioMutex<HashSet<PathBuf>>>,
 ) {
-    let entries = match std::fs::read_dir(watch_dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-
     let config_yaml_name = format!("{}.yaml", config.name);
+    let config_yaml_path = watch_dir.join(&config_yaml_name);
 
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-
+    for path in collect_scan_files(watch_dir) {
         let file_name = path
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("")
             .to_string();
 
-        if file_name == config_yaml_name {
+        if path == config_yaml_path {
             let invalid_path = watch_dir.join(format!("{}.invalid", config.name));
             if invalid_path.exists() {
                 continue;
@@ -192,6 +188,21 @@ async fn scan_directory(
             Err(_) => continue,
         };
         let current_size = metadata.len();
+        let current_mtime = metadata.modified().ok();
+
+        // `input_file_action: none` leaves the source on disk. Remember its
+        // signature so the next scan does not enqueue it again; if the file
+        // changes (size or mtime), allow it to be processed once more.
+        if matches!(
+            global_config.input_file_action,
+            crate::config::global::InputFileAction::None
+        ) {
+            if is_unchanged_processed(processed_files, &path, current_size, current_mtime) {
+                file_states.remove(&path);
+                continue;
+            }
+            processed_files.remove(&path);
+        }
 
         match file_states.get(&path) {
             Some(&(first_seen, last_size)) => {
@@ -225,6 +236,12 @@ async fn scan_directory(
                             file_states.remove(&path);
                             continue;
                         }
+                        if matches!(
+                            global_config.input_file_action,
+                            crate::config::global::InputFileAction::None
+                        ) {
+                            processed_files.insert(path.clone(), (current_size, current_mtime));
+                        }
                         let _ = health_server.enqueue(&file_name);
                     } else {
                         processing_files.lock().await.remove(&path);
@@ -237,6 +254,51 @@ async fn scan_directory(
             }
         }
     }
+
+    processed_files.retain(|path, _| path.exists());
+}
+
+fn is_unchanged_processed(
+    processed: &HashMap<PathBuf, (u64, Option<SystemTime>)>,
+    path: &Path,
+    size: u64,
+    mtime: Option<SystemTime>,
+) -> bool {
+    processed
+        .get(path)
+        .is_some_and(|&(last_size, last_mtime)| last_size == size && last_mtime == mtime)
+}
+
+/// Files at the watch-folder root plus files inside `->name/` subfolders.
+/// Only immediate `->*` directories are scanned; arbitrary nested directories
+/// are ignored to keep the documented subfolder semantics predictable.
+fn collect_scan_files(watch_dir: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    let entries = match std::fs::read_dir(watch_dir) {
+        Ok(entries) => entries,
+        Err(_) => return files,
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let file_type = match entry.file_type() {
+            Ok(ft) => ft,
+            Err(_) => continue,
+        };
+        if file_type.is_file() {
+            files.push(path);
+        } else if file_type.is_dir() && entry.file_name().to_string_lossy().starts_with("->") {
+            if let Ok(sub_entries) = std::fs::read_dir(&path) {
+                for sub_entry in sub_entries.flatten() {
+                    if sub_entry.file_type().is_ok_and(|ft| ft.is_file()) {
+                        files.push(sub_entry.path());
+                    }
+                }
+            }
+        }
+    }
+
+    files
 }
 
 fn validate_and_promote_config(config_path: &Path, manifest: &WatchConfig, global: &GlobalConfig) {
@@ -272,6 +334,16 @@ fn validate_and_promote_config(config_path: &Path, manifest: &WatchConfig, globa
             return;
         }
     };
+
+    if !embedded.output_folder.is_empty() {
+        if let Err(e) =
+            crate::config::validate_absolute_path(&embedded.output_folder, "override output_folder")
+        {
+            warn!("Invalid override {:?}: {}", config_path, e);
+            create_invalid_marker(config_path, manifest);
+            return;
+        }
+    }
 
     if global.embedded_secret.is_empty() {
         warn!(
@@ -365,37 +437,55 @@ fn find_matching_rule(
             WatchType::Video { rules } => rules
                 .iter()
                 .find(|r| {
-                    r.subfolder.as_deref() == Some(fmt) && r.input_extensions.contains(&file_ext)
+                    r.subfolder
+                        .as_deref()
+                        .is_some_and(|s| s.eq_ignore_ascii_case(fmt))
+                        && r.input_extensions.contains(&file_ext)
                 })
                 .map(|r| MatchedRule::Video(r.clone())),
             WatchType::Image { rules } => rules
                 .iter()
                 .find(|r| {
-                    r.subfolder.as_deref() == Some(fmt) && r.input_extensions.contains(&file_ext)
+                    r.subfolder
+                        .as_deref()
+                        .is_some_and(|s| s.eq_ignore_ascii_case(fmt))
+                        && r.input_extensions.contains(&file_ext)
                 })
                 .map(|r| MatchedRule::Image(r.clone())),
             WatchType::Audio { rules } => rules
                 .iter()
                 .find(|r| {
-                    r.subfolder.as_deref() == Some(fmt) && r.input_extensions.contains(&file_ext)
+                    r.subfolder
+                        .as_deref()
+                        .is_some_and(|s| s.eq_ignore_ascii_case(fmt))
+                        && r.input_extensions.contains(&file_ext)
                 })
                 .map(|r| MatchedRule::Audio(r.clone())),
             WatchType::Pdf { rules } => rules
                 .iter()
                 .find(|r| {
-                    r.subfolder.as_deref() == Some(fmt) && r.input_extensions.contains(&file_ext)
+                    r.subfolder
+                        .as_deref()
+                        .is_some_and(|s| s.eq_ignore_ascii_case(fmt))
+                        && r.input_extensions.contains(&file_ext)
                 })
                 .map(|r| MatchedRule::Pdf(r.clone())),
             WatchType::Document { rules } => rules
                 .iter()
                 .find(|r| {
-                    r.subfolder.as_deref() == Some(fmt) && r.input_extensions.contains(&file_ext)
+                    r.subfolder
+                        .as_deref()
+                        .is_some_and(|s| s.eq_ignore_ascii_case(fmt))
+                        && r.input_extensions.contains(&file_ext)
                 })
                 .map(|r| MatchedRule::Document(r.clone())),
             WatchType::Custom { rules } => rules
                 .iter()
                 .find(|r| {
-                    r.subfolder.as_deref() == Some(fmt) && r.input_extensions.contains(&file_ext)
+                    r.subfolder
+                        .as_deref()
+                        .is_some_and(|s| s.eq_ignore_ascii_case(fmt))
+                        && r.input_extensions.contains(&file_ext)
                 })
                 .map(|r| MatchedRule::Custom(r.clone())),
         };
@@ -524,7 +614,7 @@ mod tests {
     use super::*;
     use crate::config::watch::{VideoRule, WatchConfig, WatchType};
 
-    fn test_video_config() -> WatchConfig {
+    pub(super) fn test_video_config() -> WatchConfig {
         WatchConfig {
             name: "test".to_string(),
             subfolders: Vec::new(),
@@ -729,5 +819,60 @@ mod tests {
 
         // Cleanup
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+}
+
+#[cfg(test)]
+mod scan_tests {
+    use super::*;
+
+    #[test]
+    fn collect_scan_files_includes_root_and_direct_subfolders() {
+        let root = std::env::temp_dir().join(format!("cw_scan_{}", std::process::id()));
+        let gpu = root.join("->GPU");
+        let other = root.join("other");
+        std::fs::create_dir_all(&gpu).unwrap();
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::write(root.join("root.mp4"), b"x").unwrap();
+        std::fs::write(gpu.join("sub.mxf"), b"x").unwrap();
+        std::fs::write(other.join("ignored.mp4"), b"x").unwrap();
+
+        let files = collect_scan_files(&root);
+        let names: Vec<String> = files
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+
+        assert!(names.contains(&"root.mp4".to_string()));
+        assert!(names.contains(&"sub.mxf".to_string()));
+        assert!(!names.contains(&"ignored.mp4".to_string()));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn processed_signature_skips_only_unchanged_files() {
+        let path = PathBuf::from("/tmp/action_none.mp4");
+        let mut processed = HashMap::new();
+        let mtime = Some(SystemTime::UNIX_EPOCH);
+        processed.insert(path.clone(), (10, mtime));
+
+        assert!(is_unchanged_processed(&processed, &path, 10, mtime));
+        assert!(!is_unchanged_processed(&processed, &path, 11, mtime));
+        assert!(!is_unchanged_processed(&processed, &path, 10, None));
+    }
+
+    #[test]
+    fn subfolder_matching_is_case_insensitive() {
+        let config = super::tests::test_video_config();
+        let path = PathBuf::from("/app/inputs/test/->GPU/broadcast.mxf");
+        let job = create_job(
+            &path,
+            "broadcast.mxf",
+            &config,
+            "test",
+            crate::config::global::InputFileAction::Mark,
+        );
+        assert!(job.is_some(), "->GPU should match subfolder rule 'gpu'");
     }
 }

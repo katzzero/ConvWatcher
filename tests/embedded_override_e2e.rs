@@ -498,3 +498,88 @@ fn embedded_override_type_mismatch_rejected() {
 
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+/// An override with a relative/traversal output_folder must be rejected before
+/// promotion; otherwise it could redirect writes outside the configured folder.
+#[test]
+fn embedded_override_invalid_output_folder_rejected() {
+    let bin = match convwatcher_bin() {
+        Some(p) => p,
+        None => {
+            eprintln!("convwatcher binary not found — skipping invalid-output override test");
+            return;
+        }
+    };
+    if !ffmpeg_available() {
+        eprintln!("ffmpeg unavailable — skipping invalid-output override test");
+        return;
+    }
+
+    let tmp = std::env::temp_dir().join(format!("cw-override-output-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&tmp);
+
+    let config_dir = tmp.join("config");
+    let watch_folder = tmp.join("watch_output");
+    let output_folder = tmp.join("output_output");
+    let logs_dir = tmp.join("logs");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    std::fs::create_dir_all(&watch_folder).unwrap();
+    std::fs::create_dir_all(&output_folder).unwrap();
+    std::fs::create_dir_all(&logs_dir).unwrap();
+
+    write_presets(&config_dir);
+
+    let watch = watch_folder.to_str().unwrap();
+    let output = output_folder.to_str().unwrap();
+    let logs_p = logs_dir.to_str().unwrap();
+
+    let watcher_name = "output_watcher";
+    let config_yaml = build_config_with_secret("mysecret42", watcher_name, watch, output, logs_p);
+    let config_path = config_dir.join("config.yaml");
+    std::fs::write(&config_path, &config_yaml).unwrap();
+
+    let mut child = std::process::Command::new(&bin)
+        .args([
+            "--config",
+            config_path.to_str().unwrap(),
+            "--no-daemon",
+            "--level",
+            "warn",
+        ])
+        .current_dir(&tmp)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to spawn convwatcher");
+
+    std::thread::sleep(Duration::from_secs(2));
+
+    let override_path = watch_folder.join(format!("{watcher_name}.yaml"));
+    let override_yaml = "secret: \"mysecret42\"\noutput_folder: relative/escape\nvideo:\n  rules:\n    - input_extensions: [.mov]\n      preset: libx264\n".to_string();
+    std::fs::write(&override_path, override_yaml).expect("failed to write override file");
+
+    let promoted_file = config_dir
+        .join("watchs")
+        .join(format!("{watcher_name}.yaml"));
+    let invalid_marker = watch_folder.join(format!("{watcher_name}.invalid"));
+
+    let has_marker = poll(
+        || invalid_marker.exists(),
+        Duration::from_secs(10),
+        Duration::from_millis(300),
+    );
+
+    let _ = child.kill();
+    let _ = child.wait();
+
+    assert!(
+        has_marker,
+        "invalid output_folder should create .invalid marker"
+    );
+    assert!(
+        !promoted_file.exists(),
+        "override with invalid output_folder must not be promoted"
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}

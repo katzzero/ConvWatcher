@@ -137,42 +137,7 @@ async fn run() -> Result<()> {
     let processing_files: Arc<TokioMutex<HashSet<PathBuf>>> =
         Arc::new(TokioMutex::new(HashSet::new()));
 
-    let (shutdown_tx, _) = broadcast::channel::<()>(1);
-
-    let mut monitor_handles = Vec::new();
-
-    for cfg in &watch_configs {
-        let tx = job_tx.clone();
-        let check_interval = Duration::from_millis(global_config.file_check_interval_ms);
-        let stable_time = Duration::from_millis(global_config.stable_time_ms);
-        let name = format!("watcher_{}", cfg.name);
-        let hs = health_server.clone();
-        let cfg_clone = cfg.clone();
-        let watch_folder = cfg_clone.watch_folder.clone();
-        let shutdown_rx = shutdown_tx.subscribe();
-        let gc = global_config.clone();
-        let pf = processing_files.clone();
-
-        let handle = tokio::spawn(async move {
-            watcher::monitor::run_file_monitor(
-                &watch_folder,
-                tx,
-                check_interval,
-                stable_time,
-                &name,
-                hs,
-                shutdown_rx,
-                cfg_clone,
-                gc,
-                pf,
-            )
-            .await;
-        });
-
-        monitor_handles.push(handle);
-    }
-
-    info!("Spawned {} file monitor(s)", monitor_handles.len());
+    let (monitor_shutdown_tx, _) = broadcast::channel::<()>(1);
 
     let global_for_reloader = global_config.clone();
     let disk_config_clone = global_config.disk_space.clone();
@@ -293,8 +258,19 @@ async fn run() -> Result<()> {
         let tx = job_tx.clone();
         let gc = global_config.clone();
         let pf = processing_files.clone();
+        let initial_configs = watch_configs.clone();
+        let monitor_shutdown_rx = monitor_shutdown_tx.subscribe();
         tokio::spawn(async move {
-            monitor_manager(reload_rx, tx, health, &gc, pf).await;
+            monitor_manager(
+                initial_configs,
+                reload_rx,
+                tx,
+                health,
+                gc,
+                pf,
+                monitor_shutdown_rx,
+            )
+            .await;
         })
     };
 
@@ -312,22 +288,21 @@ async fn run() -> Result<()> {
         }
     }
 
-    let _ = shutdown_tx.send(());
+    let _ = monitor_shutdown_tx.send(());
     info!("Waiting for subsystems to shut down...");
 
-    for handle in monitor_handles {
-        let _ = handle.await;
-    }
-
-    drop(reload_tx);
     let _ = mgmt_handle.await;
+
+    config_reload_handle.abort();
+    embedded_scanner_handle.abort();
+    drop(reload_tx);
+
+    drop(job_tx);
+    let _ = job_handle.await;
 
     health_server.stop();
     health_handle.abort();
-    job_handle.abort();
     disk_handle.abort();
-    config_reload_handle.abort();
-    embedded_scanner_handle.abort();
 
     info!("ConvWatcher stopped");
     Ok(())
@@ -344,7 +319,7 @@ async fn process_jobs(
     ffprobe_path: String,
     processing_files: Arc<TokioMutex<HashSet<PathBuf>>>,
 ) {
-    let mut handles = Vec::new();
+    let mut tasks: tokio::task::JoinSet<()> = tokio::task::JoinSet::new();
 
     while let Some(job) = job_rx.recv().await {
         let hs = health_server.clone();
@@ -356,25 +331,31 @@ async fn process_jobs(
         let pf = processing_files.clone();
         let file_path = job.file_path.clone();
 
-        let handle = tokio::spawn(async move {
+        tasks.spawn(async move {
             let _permit = sem.acquire().await;
             processor::process_one(job, hs, el, dc, ffmpeg, ffprobe).await;
             pf.lock().await.remove(&file_path);
         });
-        handles.push(handle);
+
+        // Reap completed jobs so the set does not grow unbounded on a daemon
+        // that runs for weeks.
+        while tasks.try_join_next().is_some() {}
     }
 
     info!(
         "Job processor shutting down, draining {} in-flight jobs",
-        handles.len()
+        tasks.len()
     );
 
-    for handle in handles {
-        tokio::select! {
-            _ = handle => {},
-            _ = tokio::time::sleep(Duration::from_secs(30)) => {
-                info!("Job drain timeout reached, dropping remaining handles");
-                break;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    while !tasks.is_empty() {
+        match tokio::time::timeout_at(deadline, tasks.join_next()).await {
+            Ok(Some(_)) => {}
+            Ok(None) => break,
+            Err(_) => {
+                info!("Job drain timeout reached, aborting remaining jobs");
+                tasks.abort_all();
+                while tasks.join_next().await.is_some() {}
             }
         }
     }
@@ -382,63 +363,115 @@ async fn process_jobs(
     info!("Job processor shut down complete");
 }
 
+fn spawn_monitors(
+    configs: Vec<WatchConfig>,
+    job_tx: &mpsc::Sender<ConversionJob>,
+    health_server: &Arc<health::server::HealthServer>,
+    global_config: &convwatcher::config::global::GlobalConfig,
+    processing_files: &Arc<TokioMutex<HashSet<PathBuf>>>,
+    shutdown_tx: &broadcast::Sender<()>,
+) -> Vec<tokio::task::JoinHandle<()>> {
+    let check_interval = Duration::from_millis(global_config.file_check_interval_ms);
+    let stable_time = Duration::from_millis(global_config.stable_time_ms);
+    let mut handles = Vec::with_capacity(configs.len());
+
+    for cfg in configs {
+        let tx = job_tx.clone();
+        let name = format!("watcher_{}", cfg.name);
+        let hs = health_server.clone();
+        let shutdown_rx = shutdown_tx.subscribe();
+        let cfg_clone = cfg.clone();
+        let watch_folder = cfg_clone.watch_folder.clone();
+        let gc = global_config.clone();
+        let pf = processing_files.clone();
+
+        let handle = tokio::spawn(async move {
+            watcher::monitor::run_file_monitor(
+                &watch_folder,
+                tx,
+                check_interval,
+                stable_time,
+                &name,
+                hs,
+                shutdown_rx,
+                cfg_clone,
+                gc,
+                pf,
+            )
+            .await;
+        });
+
+        handles.push(handle);
+    }
+
+    handles
+}
+
+async fn shutdown_monitors(handles: Vec<tokio::task::JoinHandle<()>>) {
+    for mut handle in handles {
+        if tokio::time::timeout(Duration::from_secs(5), &mut handle)
+            .await
+            .is_err()
+        {
+            warn!("Monitor did not stop within 5s; aborting");
+            handle.abort();
+            let _ = handle.await;
+        }
+    }
+}
+
 async fn monitor_manager(
+    initial_configs: Vec<WatchConfig>,
     mut reload_rx: mpsc::Receiver<Vec<WatchConfig>>,
     job_tx: mpsc::Sender<ConversionJob>,
     health_server: Arc<health::server::HealthServer>,
-    global_config: &convwatcher::config::global::GlobalConfig,
+    global_config: convwatcher::config::global::GlobalConfig,
     processing_files: Arc<TokioMutex<HashSet<PathBuf>>>,
+    mut shutdown_rx: broadcast::Receiver<()>,
 ) {
-    let mut current_handles: Vec<tokio::task::JoinHandle<()>> = Vec::new();
-    let (shutdown_tx, _) = broadcast::channel::<()>(1);
+    let mut generation_tx = broadcast::channel::<()>(1).0;
+    let mut current_handles = spawn_monitors(
+        initial_configs,
+        &job_tx,
+        &health_server,
+        &global_config,
+        &processing_files,
+        &generation_tx,
+    );
+    info!("Spawned {} file monitor(s)", current_handles.len());
 
-    while let Some(new_configs) = reload_rx.recv().await {
-        let _ = shutdown_tx.send(());
+    loop {
+        tokio::select! {
+            _ = shutdown_rx.recv() => break,
+            maybe = reload_rx.recv() => {
+                let Some(new_configs) = maybe else { break; };
 
-        for handle in current_handles.drain(..) {
-            let _ = handle.await;
-        }
+                let _ = generation_tx.send(());
+                shutdown_monitors(std::mem::take(&mut current_handles)).await;
 
-        for cfg in &new_configs {
-            if let Err(e) = watcher::monitor::create_folders(cfg) {
-                warn!("Failed to create folders: {}", e);
+                for cfg in &new_configs {
+                    if let Err(e) = watcher::monitor::create_folders(cfg) {
+                        warn!("Failed to create folders: {}", e);
+                    }
+                    health_server.add_watcher_with_config(cfg).await;
+                }
+
+                generation_tx = broadcast::channel::<()>(1).0;
+                current_handles = spawn_monitors(
+                    new_configs,
+                    &job_tx,
+                    &health_server,
+                    &global_config,
+                    &processing_files,
+                    &generation_tx,
+                );
+
+                info!("Monitors refreshed: {} watcher(s)", current_handles.len());
             }
-            health_server.add_watcher_with_config(cfg).await;
         }
-
-        let (shutdown_tx, _) = broadcast::channel::<()>(1);
-        let check_interval = Duration::from_millis(global_config.file_check_interval_ms);
-        let stable_time = Duration::from_millis(global_config.stable_time_ms);
-
-        for cfg in new_configs {
-            let tx = job_tx.clone();
-            let name = format!("watcher_{}", cfg.name);
-            let hs = health_server.clone();
-            let shutdown_rx = shutdown_tx.subscribe();
-            let cfg_clone = cfg.clone();
-            let watch_folder = cfg_clone.watch_folder.clone();
-            let gc = global_config.clone();
-            let pf = processing_files.clone();
-
-            let handle = tokio::spawn(async move {
-                watcher::monitor::run_file_monitor(
-                    &watch_folder,
-                    tx,
-                    check_interval,
-                    stable_time,
-                    &name,
-                    hs,
-                    shutdown_rx,
-                    cfg_clone,
-                    gc,
-                    pf,
-                )
-                .await;
-            });
-
-            current_handles.push(handle);
-        }
-
-        info!("Monitors refreshed: {} watcher(s)", current_handles.len());
     }
+
+    let _ = generation_tx.send(());
+    shutdown_monitors(current_handles).await;
+    info!("Monitor manager exited");
 }
