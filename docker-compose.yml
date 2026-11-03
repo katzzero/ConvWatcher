@@ -23,10 +23,10 @@ services:
       - /dev/dri:/dev/dri
     environment:
       - RUST_LOG=info
-    # Health server is bound to 127.0.0.1 by default (see config).
-    # This mapping exposes it on the host loopback for local access only.
-    # WARNING: If you change the bind_address in config to 0.0.0.0, this port
-    # will be publicly accessible - ensure proper auth is configured.
+    # Health server is bound to 127.0.0.1 inside the container by default, so
+    # this mapping only works if you also set `healthcheck.bind_address: 0.0.0.0`
+    # in config. In that case set `healthcheck.auth_token` and keep this mapping
+    # on the host loopback (127.0.0.1) only.
     ports:
       - "127.0.0.1:8080:8080"
     deploy:

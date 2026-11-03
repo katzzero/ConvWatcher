@@ -650,3 +650,90 @@ fn sigterm_shuts_down_process_within_timeout() {
     );
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+#[cfg(unix)]
+#[test]
+fn reload_and_sigterm_concurrently_shuts_down() {
+    let bin = match convwatcher_bin() {
+        Some(p) => p,
+        None => {
+            eprintln!("convwatcher binary not found — skipping reload+shutdown test");
+            return;
+        }
+    };
+    if !ffmpeg_available() {
+        eprintln!("ffmpeg unavailable — skipping reload+shutdown test");
+        return;
+    }
+
+    let tmp = std::env::temp_dir().join(format!("cw-reload-term-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&tmp);
+    let config_dir = tmp.join("config");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    write_presets(&config_dir);
+    let config_path = config_dir.join("config.yaml");
+
+    let ffmpeg_path =
+        std::env::var("FFMPEG_PATH").unwrap_or_else(|_| "/opt/homebrew/bin/ffmpeg".to_string());
+    let watch1 = tmp.join("watch_1").to_string_lossy().to_string();
+    let output1 = tmp.join("output_1").to_string_lossy().to_string();
+    let logs_dir = tmp.join("logs").to_string_lossy().to_string();
+    std::fs::write(
+        &config_path,
+        build_initial_config(&ffmpeg_path, &watch1, &output1, &logs_dir),
+    )
+    .unwrap();
+
+    let watch2 = tmp.join("watch_2").to_string_lossy().to_string();
+    let output2 = tmp.join("output_2").to_string_lossy().to_string();
+
+    let mut child = std::process::Command::new(&bin)
+        .args([
+            "--config",
+            config_path.to_str().unwrap(),
+            "--no-daemon",
+            "--level",
+            "warn",
+        ])
+        .current_dir(&tmp)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to spawn convwatcher");
+
+    std::thread::sleep(Duration::from_secs(2));
+
+    // Change config and immediately request shutdown; this exercised the
+    // reload/shutdown race that previously hung in monitor_manager.
+    std::fs::write(
+        &config_path,
+        build_reloaded_config(
+            &ffmpeg_path,
+            &watch1,
+            &output1,
+            &watch2,
+            &output2,
+            &logs_dir,
+        ),
+    )
+    .unwrap();
+    std::thread::sleep(Duration::from_millis(200));
+
+    let status = std::process::Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status()
+        .expect("failed to send SIGTERM");
+    assert!(status.success(), "kill -TERM should succeed");
+
+    let exited = poll(
+        || !child_alive(&mut child),
+        Duration::from_secs(15),
+        Duration::from_millis(200),
+    );
+    if !exited {
+        let _ = child.kill();
+    }
+    let _ = child.wait();
+    assert!(exited, "process must exit when reload and SIGTERM race");
+    let _ = std::fs::remove_dir_all(&tmp);
+}

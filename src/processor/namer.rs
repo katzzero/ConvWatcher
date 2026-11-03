@@ -85,7 +85,53 @@ impl OutputNamer {
         );
         let path = output_folder.join(&filename);
         validate_filename(&filename)?;
-        Ok(path)
+
+        // Atomically claim the slot to avoid TOCTOU.
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(_) => Ok(path),
+            Err(ref e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                warn!(
+                    "Timestamp-based path already exists, incrementing: {:?}",
+                    path
+                );
+                // Increment counter and try again
+                for offset in 1..=100 {
+                    let new_filename = format!(
+                        "{}_{}_{}.{}",
+                        base_name,
+                        codec,
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs()
+                            + offset,
+                        ext
+                    );
+                    let new_path = output_folder.join(&new_filename);
+                    validate_filename(&new_filename)?;
+                    if OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .open(&new_path)
+                        .is_ok()
+                    {
+                        return Ok(new_path);
+                    }
+                }
+                Err(anyhow::anyhow!(
+                    "Could not claim any timestamp-based output path in {:?}",
+                    output_folder
+                ))
+            }
+            Err(e) => {
+                warn!("Could not claim timestamp path {:?}: {}", path, e);
+                Err(anyhow::anyhow!(
+                    "Failed to create timestamp-based output path {:?}: {}",
+                    path,
+                    e
+                ))
+            }
+        }
     }
 }
 
@@ -222,6 +268,55 @@ mod tests {
         // The error should mention the output_folder and template.
         assert!(err.contains("output_folder"), "error msg: {}", err);
         assert!(err.contains("template"), "error msg: {}", err);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_generate_with_counter_timestamp_fallback_creates_file() {
+        let dir = std::env::temp_dir().join("convwatcher_namer_timestamp_test");
+        std::fs::create_dir_all(&dir).unwrap();
+        // Exhaust the counter range to force timestamp fallback
+        for counter in 0..1000 {
+            let filename = format!("base_video_{}.mp4", counter);
+            let _ = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(dir.join(&filename));
+        }
+        let result = OutputNamer::generate_with_counter(&dir, "base", "video", "mp4");
+        assert!(result.is_ok());
+        let path = result.unwrap();
+        assert!(path.starts_with(&dir));
+        assert!(
+            path.exists(),
+            "Timestamp-based file should be created atomically"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_generate_path_exhausted_returns_error() {
+        let dir = std::env::temp_dir().join("convwatcher_namer_exhausted_test");
+        std::fs::create_dir_all(&dir).unwrap();
+        // Exhaust the regular counter range to force error from generate_path
+        for num in 0..1000 {
+            let filename = format!("base_codec_{}.mp4", num);
+            let _ = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(dir.join(&filename));
+        }
+        let result =
+            OutputNamer::generate_path(&dir, "base", "{base}_{codec}_{num}.{ext}", "codec", "mp4");
+        assert!(
+            result.is_err(),
+            "generate_path should return error when exhausted"
+        );
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("No free output path"),
+            "Error should mention exhausted range"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 }

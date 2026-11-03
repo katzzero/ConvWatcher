@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -7,10 +7,11 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use log::{error, info, warn};
 use tokio::signal::unix::{signal, SignalKind};
-use tokio::sync::{broadcast, mpsc, Mutex as TokioMutex, Semaphore};
+use tokio::sync::{broadcast, mpsc, Semaphore};
 
 use convwatcher::cli::Cli;
 use convwatcher::config;
+use convwatcher::config::global::GlobalConfig;
 use convwatcher::config::watch::WatchConfig;
 use convwatcher::health;
 use convwatcher::logs::error_logger::ErrorLogger;
@@ -37,19 +38,28 @@ async fn main() {
 async fn run() -> Result<()> {
     let cli = Cli::parse();
 
+    // Load config first to get app_log_file path for logging setup
+    let (global_config, mut watch_configs, _registry) = config::load_config(cli.config.as_deref())?;
+    info!("Global config loaded");
+    info!("Loaded {} watcher config(s)", watch_configs.len());
+
+    // Set timeout from config
+    processor::runner::set_timeout_secs(global_config.timeout_s);
+
+    // Shared mutable view of GlobalConfig for hot-reload; monitor_manager reads
+    // this when a reload arrives so global.* changes take effect.
+    let shared_global = Arc::new(std::sync::RwLock::new(global_config.clone()));
+    let config_dir = config::config_dir_for(cli.config.as_deref());
+
     // Setup logging after loading config (uses app_log_file from LogConfig)
     convwatcher::logs::setup_logging(
         &cli.level.to_string(),
-        Some("./logs/convwatcher.log"),
+        Some(&global_config.log.app_log_file),
         cli.daemon,
         cli.no_daemon,
     )?;
 
     info!("ConvWatcher v{} starting", env!("CARGO_PKG_VERSION"));
-
-    let (global_config, mut watch_configs, _registry) = config::load_config(cli.config.as_deref())?;
-    info!("Global config loaded");
-    info!("Loaded {} watcher config(s)", watch_configs.len());
 
     if let Some(watch_folder) = &cli.watch {
         let quick_config = WatchConfig {
@@ -79,6 +89,9 @@ async fn run() -> Result<()> {
                 }],
             },
         };
+        // Validate the quick config
+        config::validate_config(&global_config, std::slice::from_ref(&quick_config))
+            .with_context(|| "Invalid quick watch config")?;
         watch_configs.push(quick_config);
     }
 
@@ -111,7 +124,8 @@ async fn run() -> Result<()> {
             &global_config.history.file,
             global_config.history.persistent,
         )
-        .with_app_log("logs/convwatcher.log".to_string()),
+        .with_app_log(global_config.log.app_log_file.clone())
+        .with_auth_token(global_config.healthcheck.auth_token.clone()),
     );
 
     for cfg in &watch_configs {
@@ -134,8 +148,8 @@ async fn run() -> Result<()> {
         global_config.max_concurrent_conversions as usize,
     ));
 
-    let processing_files: Arc<TokioMutex<HashSet<PathBuf>>> =
-        Arc::new(TokioMutex::new(HashSet::new()));
+    let processing_files: Arc<std::sync::Mutex<HashSet<PathBuf>>> =
+        Arc::new(std::sync::Mutex::new(HashSet::new()));
 
     let (monitor_shutdown_tx, _) = broadcast::channel::<()>(8);
 
@@ -195,6 +209,7 @@ async fn run() -> Result<()> {
 
     let cfg_path_for_reloader = cli.config.clone();
     let reload_tx_clone = reload_tx.clone();
+    let shared_global_for_reloader = shared_global.clone();
     let config_tx_clone = config_tx.clone();
     let initial_config_sig = serde_yaml::to_string(&(&global_for_reloader, &watch_configs)).ok();
 
@@ -219,6 +234,9 @@ async fn run() -> Result<()> {
                         };
                         if last_sig.as_deref() != Some(sig.as_str()) {
                             last_sig = Some(sig);
+                            *shared_global_for_reloader
+                                .write()
+                                .unwrap_or_else(|p| p.into_inner()) = global.clone();
                             let _ = reload_tx_clone.send(new_configs.clone()).await;
                             let _ = config_tx_clone.send(new_configs).await;
                         } else {
@@ -233,14 +251,14 @@ async fn run() -> Result<()> {
 
     let embedded_scanner_handle = {
         let reload_tx = reload_tx.clone();
-        let watchs_dir = String::from("config/watchs");
+        let watchs_dir = config_dir.join("watchs");
         let secret = global_config.embedded_secret.clone();
         let scan_interval = global_config.embedded_scan_interval_s;
         let main_configs = watch_configs.clone();
 
         tokio::spawn(async move {
             watcher::embedded::run_embedded_scanner(
-                watchs_dir,
+                watchs_dir.to_string_lossy().to_string(),
                 secret,
                 scan_interval,
                 reload_tx,
@@ -260,6 +278,8 @@ async fn run() -> Result<()> {
         let pf = processing_files.clone();
         let initial_configs = watch_configs.clone();
         let monitor_shutdown_rx = monitor_shutdown_tx.subscribe();
+        let shared_global = shared_global.clone();
+        let config_dir = config_dir.clone();
         tokio::spawn(async move {
             monitor_manager(
                 initial_configs,
@@ -269,6 +289,8 @@ async fn run() -> Result<()> {
                 gc,
                 pf,
                 monitor_shutdown_rx,
+                shared_global,
+                config_dir,
             )
             .await;
         })
@@ -312,6 +334,19 @@ async fn run() -> Result<()> {
     Ok(())
 }
 
+struct ProcessingGuard {
+    files: Arc<std::sync::Mutex<HashSet<PathBuf>>>,
+    path: PathBuf,
+}
+
+impl Drop for ProcessingGuard {
+    fn drop(&mut self) {
+        if let Ok(mut files) = self.files.lock() {
+            files.remove(&self.path);
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn process_jobs(
     mut job_rx: mpsc::Receiver<ConversionJob>,
@@ -321,7 +356,7 @@ async fn process_jobs(
     semaphore: Arc<Semaphore>,
     ffmpeg_path: String,
     ffprobe_path: String,
-    processing_files: Arc<TokioMutex<HashSet<PathBuf>>>,
+    processing_files: Arc<std::sync::Mutex<HashSet<PathBuf>>>,
 ) {
     let mut tasks: tokio::task::JoinSet<()> = tokio::task::JoinSet::new();
 
@@ -336,9 +371,14 @@ async fn process_jobs(
         let file_path = job.file_path.clone();
 
         tasks.spawn(async move {
+            // Removes the path from processing_files on every exit path,
+            // including panic or task abort.
+            let _processing_guard = ProcessingGuard {
+                files: pf,
+                path: file_path,
+            };
             let _permit = sem.acquire().await;
             processor::process_one(job, hs, el, dc, ffmpeg, ffprobe).await;
-            pf.lock().await.remove(&file_path);
         });
 
         // Reap completed jobs so the set does not grow unbounded on a daemon
@@ -372,8 +412,9 @@ fn spawn_monitors(
     job_tx: &mpsc::Sender<ConversionJob>,
     health_server: &Arc<health::server::HealthServer>,
     global_config: &convwatcher::config::global::GlobalConfig,
-    processing_files: &Arc<TokioMutex<HashSet<PathBuf>>>,
+    processing_files: &Arc<std::sync::Mutex<HashSet<PathBuf>>>,
     shutdown_tx: &broadcast::Sender<()>,
+    config_dir: &Path,
 ) -> Vec<tokio::task::JoinHandle<()>> {
     let check_interval = Duration::from_millis(global_config.file_check_interval_ms);
     let stable_time = Duration::from_millis(global_config.stable_time_ms);
@@ -388,6 +429,7 @@ fn spawn_monitors(
         let watch_folder = cfg_clone.watch_folder.clone();
         let gc = global_config.clone();
         let pf = processing_files.clone();
+        let config_dir = config_dir.to_path_buf();
 
         let handle = tokio::spawn(async move {
             watcher::monitor::run_file_monitor(
@@ -401,6 +443,7 @@ fn spawn_monitors(
                 cfg_clone,
                 gc,
                 pf,
+                &config_dir,
             )
             .await;
         });
@@ -424,23 +467,28 @@ async fn shutdown_monitors(handles: Vec<tokio::task::JoinHandle<()>>) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn monitor_manager(
     initial_configs: Vec<WatchConfig>,
     mut reload_rx: mpsc::Receiver<Vec<WatchConfig>>,
     job_tx: mpsc::Sender<ConversionJob>,
     health_server: Arc<health::server::HealthServer>,
     global_config: convwatcher::config::global::GlobalConfig,
-    processing_files: Arc<TokioMutex<HashSet<PathBuf>>>,
+    processing_files: Arc<std::sync::Mutex<HashSet<PathBuf>>>,
     mut shutdown_rx: broadcast::Receiver<()>,
+    shared_global: Arc<std::sync::RwLock<GlobalConfig>>,
+    config_dir: PathBuf,
 ) {
     let mut generation_tx = broadcast::channel::<()>(8).0;
+    let mut current_global = global_config.clone();
     let mut current_handles = spawn_monitors(
         initial_configs,
         &job_tx,
         &health_server,
-        &global_config,
+        &current_global,
         &processing_files,
         &generation_tx,
+        &config_dir,
     );
     info!("Spawned {} file monitor(s)", current_handles.len());
 
@@ -448,7 +496,14 @@ async fn monitor_manager(
         tokio::select! {
             _ = shutdown_rx.recv() => break,
             maybe = reload_rx.recv() => {
-                let Some(new_configs) = maybe else { break; };
+                let Some(new_configs) = maybe else { break };
+
+                // Pick up global.* changes applied by the reload task.
+                current_global = shared_global
+                    .read()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .clone();
+                processor::runner::set_timeout_secs(current_global.timeout_s);
 
                 let _ = generation_tx.send(());
                 shutdown_monitors(std::mem::take(&mut current_handles)).await;
@@ -465,9 +520,10 @@ async fn monitor_manager(
                     new_configs,
                     &job_tx,
                     &health_server,
-                    &global_config,
+                    &current_global,
                     &processing_files,
                     &generation_tx,
+                    &config_dir,
                 );
 
                 info!("Monitors refreshed: {} watcher(s)", current_handles.len());

@@ -199,256 +199,192 @@ fn load_preset_file(path: &Path, label: &str) -> Result<HashMap<String, CodecPre
     );
     Ok(file.presets)
 }
-#[allow(clippy::too_many_arguments)]
-pub fn resolve_video_rule(
-    preset_name: &str,
-    input_extensions: Vec<String>,
-    subfolder: Option<String>,
-    output_name: Option<String>,
-    check_duration: Option<bool>,
-    min_duration_ratio: Option<f64>,
-    codec: Option<String>,
-    quality: Option<String>,
-    audio_codec: Option<String>,
-    audio_bitrate: Option<String>,
-    output_ext: Option<String>,
-    registry: &CodecRegistry,
-) -> Result<VideoRule> {
-    let preset = registry.video.get(preset_name).ok_or_else(|| {
-        anyhow::anyhow!(
-            "Video preset '{}' not found in video_codecs.yaml",
-            preset_name
+/// Generates one `resolve_*_rule` function. All six resolvers share the same
+/// shape: look the preset up by name, then merge every rule field with the
+/// precedence **rule override → preset value → hard-coded default**.
+///
+/// The generated function signature is fixed:
+/// `preset_name, input_extensions, subfolder, output_name, <params...>, registry`
+/// (matching the historical positional API), returning `Result<#rule>`.
+///
+/// Each param entry is `name: Type => rule_field, mode [(default)]`; the param
+/// name is also the `CodecPreset` field it reads from (as in the original
+/// hand-written resolvers). Per-field modes:
+/// - `fallback(d)`       → `Some(p.unwrap_or(d))` — no preset involvement.
+/// - `string(d)`         → override, preset clone, literal default.
+/// - `opt`               → override or preset clone (stays `Option`).
+/// - `copy_opt`          → override or preset value (Copy field types).
+/// - `parsed_u32(d)`     → preset stores `Option<String>` parsed into `u32`.
+/// - `bool_preset(d)`    → override, preset bool, literal default.
+/// - `enum_default`      → override, preset clone, `Default::default()`.
+/// - `required`          → override or preset clone; errors when both are
+///   missing (`"<Label> preset '<name>' has no <field> field"`).
+macro_rules! define_rule_resolver {
+    // Field-merge helpers. `$preset` / `$pname` are passed in as idents from
+    // the generated body so they keep that scope's hygiene context; `$p` is
+    // both the parameter binding and the identically named `CodecPreset` field.
+    (@field $label:expr, $preset:ident, $pname:ident, $p:ident, fallback($d:tt)) => {
+        Some($p.unwrap_or($d))
+    };
+    (@field $label:expr, $preset:ident, $pname:ident, $p:ident, string($d:tt)) => {
+        Some($p.or_else(|| $preset.$p.clone()).unwrap_or_else(|| $d.to_string()))
+    };
+    (@field $label:expr, $preset:ident, $pname:ident, $p:ident, opt) => {
+        $p.or_else(|| $preset.$p.clone())
+    };
+    (@field $label:expr, $preset:ident, $pname:ident, $p:ident, copy_opt) => {
+        $p.or($preset.$p)
+    };
+    (@field $label:expr, $preset:ident, $pname:ident, $p:ident, parsed_u32($d:tt)) => {
+        Some($p.or($preset.$p.as_ref().and_then(|s| s.parse().ok())).unwrap_or($d))
+    };
+    (@field $label:expr, $preset:ident, $pname:ident, $p:ident, bool_preset($d:tt)) => {
+        Some($p.or($preset.$p).unwrap_or($d))
+    };
+    (@field $label:expr, $preset:ident, $pname:ident, $p:ident, enum_default) => {
+        Some($p.or($preset.$p.clone()).unwrap_or_default())
+    };
+    (@field $label:expr, $preset:ident, $pname:ident, $p:ident, required) => {
+        Some(
+            $p.or_else(|| $preset.$p.clone())
+                .ok_or_else(|| anyhow::anyhow!("{} preset '{}' has no {} field", $label, $pname, stringify!($p)))?,
         )
-    })?;
+    };
 
-    Ok(VideoRule {
-        preset: preset_name.to_string(),
-        subfolder,
-        input_extensions,
-        output_ext: Some(
-            output_ext
-                .or_else(|| preset.output_ext.clone())
-                .unwrap_or_else(|| ".mp4".to_string()),
-        ),
-        codec: Some(
-            codec
-                .or_else(|| preset.codec.clone())
-                .unwrap_or_else(|| "libx264".to_string()),
-        ),
-        quality: Some(
-            quality
-                .or_else(|| preset.quality.clone())
-                .unwrap_or_else(|| "crf 23".to_string()),
-        ),
-        audio_codec: Some(
-            audio_codec
-                .or_else(|| preset.audio_codec.clone())
-                .unwrap_or_else(|| "aac".to_string()),
-        ),
-        audio_bitrate: Some(
-            audio_bitrate
-                .or_else(|| preset.audio_bitrate.clone())
-                .unwrap_or_else(|| "128k".to_string()),
-        ),
-        output_name: Some(output_name.unwrap_or_else(|| "{base}_{codec}_{num}.{ext}".to_string())),
-        check_duration: Some(check_duration.unwrap_or(true)),
-        min_duration_ratio: Some(min_duration_ratio.unwrap_or(0.9)),
-    })
+    (
+        fn $fn_name:ident,
+        map: $map:ident,
+        label: $label:expr,
+        preset_file: $preset_file:expr,
+        rule: $rule:ident,
+        output_name_default: $name_default:expr,
+        params: [ $( $param:ident : $param_ty:ty => $field:ident, $mode:ident $( ( $d:tt ) )? , )* ],
+    ) => {
+        #[allow(clippy::too_many_arguments)]
+        pub fn $fn_name(
+            preset_name: &str,
+            input_extensions: Vec<String>,
+            subfolder: Option<String>,
+            output_name: Option<String>,
+            $( $param : $param_ty, )*
+            registry: &CodecRegistry,
+        ) -> Result<$rule> {
+            let preset = registry.$map.get(preset_name).ok_or_else(|| {
+                anyhow::anyhow!("{} preset '{}' not found in {}", $label, preset_name, $preset_file)
+            })?;
+
+            Ok($rule {
+                preset: preset_name.to_string(),
+                subfolder,
+                input_extensions,
+                output_name: Some(output_name.unwrap_or_else(|| $name_default.to_string())),
+                $(
+                    $field: define_rule_resolver!(
+                        @field $label, preset, preset_name, $param, $mode $( ( $d ) )?
+                    ),
+                )*
+            })
+        }
+    };
 }
-#[allow(clippy::too_many_arguments)]
-pub fn resolve_image_rule(
-    preset_name: &str,
-    input_extensions: Vec<String>,
-    subfolder: Option<String>,
-    output_name: Option<String>,
-    quality: Option<u32>,
-    transparent: Option<bool>,
-    output_ext: Option<String>,
-    registry: &CodecRegistry,
-) -> Result<ImageRule> {
-    let preset = registry.image.get(preset_name).ok_or_else(|| {
-        anyhow::anyhow!(
-            "Image preset '{}' not found in image_codecs.yaml",
-            preset_name
-        )
-    })?;
 
-    Ok(ImageRule {
-        preset: preset_name.to_string(),
-        subfolder,
-        input_extensions,
-        output_ext: Some(
-            output_ext
-                .or_else(|| preset.output_ext.clone())
-                .unwrap_or_else(|| ".png".to_string()),
-        ),
-        quality: Some(
-            quality
-                .or(preset.quality.as_ref().and_then(|s| s.parse().ok()))
-                .unwrap_or(90),
-        ),
-        transparent: Some(transparent.or(preset.transparent).unwrap_or(false)),
-        output_name: Some(output_name.unwrap_or_else(|| "{base}_conv.{ext}".to_string())),
-    })
+define_rule_resolver! {
+    fn resolve_video_rule,
+    map: video,
+    label: "Video",
+    preset_file: "video_codecs.yaml",
+    rule: VideoRule,
+    output_name_default: "{base}_{codec}_{num}.{ext}",
+    params: [
+        check_duration: Option<bool> => check_duration, fallback(true),
+        min_duration_ratio: Option<f64> => min_duration_ratio, fallback(0.9),
+        codec: Option<String> => codec, string("libx264"),
+        quality: Option<String> => quality, string("crf 23"),
+        audio_codec: Option<String> => audio_codec, string("aac"),
+        audio_bitrate: Option<String> => audio_bitrate, string("128k"),
+        output_ext: Option<String> => output_ext, string(".mp4"),
+    ],
 }
-#[allow(clippy::too_many_arguments)]
-pub fn resolve_audio_rule(
-    preset_name: &str,
-    input_extensions: Vec<String>,
-    subfolder: Option<String>,
-    output_name: Option<String>,
-    audio_codec: Option<String>,
-    audio_bitrate: Option<String>,
-    sample_rate: Option<u32>,
-    channels: Option<u8>,
-    output_ext: Option<String>,
-    registry: &CodecRegistry,
-) -> Result<AudioRule> {
-    let preset = registry.audio.get(preset_name).ok_or_else(|| {
-        anyhow::anyhow!(
-            "Audio preset '{}' not found in audio_codecs.yaml",
-            preset_name
-        )
-    })?;
 
-    Ok(AudioRule {
-        preset: preset_name.to_string(),
-        subfolder,
-        input_extensions,
-        output_ext: Some(
-            output_ext
-                .or_else(|| preset.output_ext.clone())
-                .unwrap_or_else(|| ".mp3".to_string()),
-        ),
-        audio_codec: Some(
-            audio_codec
-                .or_else(|| preset.audio_codec.clone())
-                .unwrap_or_else(|| "libmp3lame".to_string()),
-        ),
-        audio_bitrate: Some(
-            audio_bitrate
-                .or_else(|| preset.audio_bitrate.clone())
-                .unwrap_or_else(|| "192k".to_string()),
-        ),
-        sample_rate: sample_rate.or(preset.sample_rate),
-        channels: channels.or(preset.channels),
-        output_name: Some(output_name.unwrap_or_else(|| "{base}_{codec}_{num}.{ext}".to_string())),
-    })
+define_rule_resolver! {
+    fn resolve_image_rule,
+    map: image,
+    label: "Image",
+    preset_file: "image_codecs.yaml",
+    rule: ImageRule,
+    output_name_default: "{base}_conv.{ext}",
+    params: [
+        quality: Option<u32> => quality, parsed_u32(90),
+        transparent: Option<bool> => transparent, bool_preset(false),
+        output_ext: Option<String> => output_ext, string(".png"),
+    ],
 }
-#[allow(clippy::too_many_arguments)]
-pub fn resolve_pdf_rule(
-    preset_name: &str,
-    input_extensions: Vec<String>,
-    subfolder: Option<String>,
-    output_name: Option<String>,
-    mode: Option<PdfMode>,
-    pdf_quality: Option<PdfQuality>,
-    pdfa_version: Option<String>,
-    resolution: Option<u32>,
-    password: Option<String>,
-    output_ext: Option<String>,
-    registry: &CodecRegistry,
-) -> Result<PdfRule> {
-    let preset = registry.pdf.get(preset_name).ok_or_else(|| {
-        anyhow::anyhow!("PDF preset '{}' not found in pdf_presets.yaml", preset_name)
-    })?;
 
-    Ok(PdfRule {
-        preset: preset_name.to_string(),
-        subfolder,
-        input_extensions,
-        output_ext: Some(
-            output_ext
-                .or_else(|| preset.output_ext.clone())
-                .unwrap_or_else(|| ".pdf".to_string()),
-        ),
-        mode: Some(mode.or(preset.mode.clone()).unwrap_or_default()),
-        quality: pdf_quality.or(preset.pdf_quality.clone()),
-        pdfa_version: pdfa_version.or_else(|| preset.pdfa_version.clone()),
-        resolution: resolution.or(preset.resolution),
-        password: password.or_else(|| preset.password.clone()),
-        output_name: Some(output_name.unwrap_or_else(|| "{base}_converted.{ext}".to_string())),
-    })
+define_rule_resolver! {
+    fn resolve_audio_rule,
+    map: audio,
+    label: "Audio",
+    preset_file: "audio_codecs.yaml",
+    rule: AudioRule,
+    output_name_default: "{base}_{codec}_{num}.{ext}",
+    params: [
+        audio_codec: Option<String> => audio_codec, string("libmp3lame"),
+        audio_bitrate: Option<String> => audio_bitrate, string("192k"),
+        sample_rate: Option<u32> => sample_rate, copy_opt,
+        channels: Option<u8> => channels, copy_opt,
+        output_ext: Option<String> => output_ext, string(".mp3"),
+    ],
 }
-#[allow(clippy::too_many_arguments)]
-pub fn resolve_document_rule(
-    preset_name: &str,
-    input_extensions: Vec<String>,
-    subfolder: Option<String>,
-    output_name: Option<String>,
-    output_ext: Option<String>,
-    toc: Option<bool>,
-    toc_depth: Option<u8>,
-    css: Option<String>,
-    template: Option<String>,
-    standalone: Option<bool>,
-    metadata: Option<Vec<String>>,
-    pdf_engine: Option<String>,
-    options: Option<Vec<String>>,
-    registry: &CodecRegistry,
-) -> Result<DocumentRule> {
-    let preset = registry.document.get(preset_name).ok_or_else(|| {
-        anyhow::anyhow!(
-            "Document preset '{}' not found in document_presets.yaml",
-            preset_name
-        )
-    })?;
 
-    Ok(DocumentRule {
-        preset: preset_name.to_string(),
-        subfolder,
-        input_extensions,
-        output_ext: Some(
-            output_ext
-                .or_else(|| preset.output_ext.clone())
-                .unwrap_or_else(|| ".pdf".to_string()),
-        ),
-        toc: Some(toc.or(preset.toc).unwrap_or(false)),
-        toc_depth: toc_depth.or(preset.toc_depth),
-        css: css.or_else(|| preset.css.clone()),
-        template: template.or_else(|| preset.template.clone()),
-        standalone: Some(standalone.or(preset.standalone).unwrap_or(false)),
-        metadata: metadata.or_else(|| preset.metadata.clone()),
-        pdf_engine: pdf_engine.or_else(|| preset.pdf_engine.clone()),
-        options: options.or_else(|| preset.options.clone()),
-        output_name: Some(output_name.unwrap_or_else(|| "{base}_converted.{ext}".to_string())),
-    })
+define_rule_resolver! {
+    fn resolve_pdf_rule,
+    map: pdf,
+    label: "PDF",
+    preset_file: "pdf_presets.yaml",
+    rule: PdfRule,
+    output_name_default: "{base}_converted.{ext}",
+    params: [
+        mode: Option<PdfMode> => mode, enum_default,
+        pdf_quality: Option<PdfQuality> => quality, opt,
+        pdfa_version: Option<String> => pdfa_version, opt,
+        resolution: Option<u32> => resolution, copy_opt,
+        password: Option<String> => password, opt,
+        output_ext: Option<String> => output_ext, string(".pdf"),
+    ],
 }
-#[allow(clippy::too_many_arguments)]
-pub fn resolve_custom_rule(
-    preset_name: &str,
-    input_extensions: Vec<String>,
-    subfolder: Option<String>,
-    output_name: Option<String>,
-    description: Option<String>,
-    command: Option<String>,
-    output_ext: Option<String>,
-    registry: &CodecRegistry,
-) -> Result<CustomRule> {
-    let preset = registry.custom.get(preset_name).ok_or_else(|| {
-        anyhow::anyhow!(
-            "Custom preset '{}' not found in custom_presets.yaml",
-            preset_name
-        )
-    })?;
 
-    let cmd = command
-        .or_else(|| preset.command.clone())
-        .ok_or_else(|| anyhow::anyhow!("Custom preset '{}' has no command field", preset_name))?;
+define_rule_resolver! {
+    fn resolve_document_rule,
+    map: document,
+    label: "Document",
+    preset_file: "document_presets.yaml",
+    rule: DocumentRule,
+    output_name_default: "{base}_converted.{ext}",
+    params: [
+        output_ext: Option<String> => output_ext, string(".pdf"),
+        toc: Option<bool> => toc, bool_preset(false),
+        toc_depth: Option<u8> => toc_depth, copy_opt,
+        css: Option<String> => css, opt,
+        template: Option<String> => template, opt,
+        standalone: Option<bool> => standalone, bool_preset(false),
+        metadata: Option<Vec<String>> => metadata, opt,
+        pdf_engine: Option<String> => pdf_engine, opt,
+        options: Option<Vec<String>> => options, opt,
+    ],
+}
 
-    Ok(CustomRule {
-        preset: preset_name.to_string(),
-        subfolder,
-        input_extensions,
-        output_ext: Some(
-            output_ext
-                .or_else(|| preset.output_ext.clone())
-                .unwrap_or_else(|| ".mp4".to_string()),
-        ),
-        command: Some(cmd),
-        output_name: Some(output_name.unwrap_or_else(|| "{base}_custom.{ext}".to_string())),
-        description: description.or_else(|| preset.description.clone()),
-    })
+define_rule_resolver! {
+    fn resolve_custom_rule,
+    map: custom,
+    label: "Custom",
+    preset_file: "custom_presets.yaml",
+    rule: CustomRule,
+    output_name_default: "{base}_custom.{ext}",
+    params: [
+        description: Option<String> => description, opt,
+        command: Option<String> => command, required,
+        output_ext: Option<String> => output_ext, string(".mp4"),
+    ],
 }
 
 pub fn resolve_watchers(
@@ -869,6 +805,83 @@ mod tests {
         } else {
             panic!("Expected Video type");
         }
+    }
+
+    #[test]
+    fn test_resolve_custom_rule_from_preset() {
+        let mut registry = test_registry();
+        registry.custom.insert(
+            "mkv_mix".to_string(),
+            CodecPreset {
+                command: Some("ffmpeg -i {input} {output}".to_string()),
+                description: Some("remux to mkv".to_string()),
+                ..Default::default()
+            },
+        );
+        let rule = resolve_custom_rule(
+            "mkv_mix",
+            vec![".mp4".into()],
+            None,
+            None,
+            None,
+            None,
+            None,
+            &registry,
+        )
+        .unwrap();
+
+        assert_eq!(rule.command.as_deref(), Some("ffmpeg -i {input} {output}"));
+        assert_eq!(rule.description.as_deref(), Some("remux to mkv"));
+        assert_eq!(rule.output_ext.as_deref(), Some(".mp4")); // hard default
+        assert_eq!(rule.output_name.as_deref(), Some("{base}_custom.{ext}"));
+    }
+
+    #[test]
+    fn test_resolve_custom_rule_missing_command() {
+        let mut registry = test_registry();
+        registry.custom.insert(
+            "no_cmd".to_string(),
+            CodecPreset {
+                output_ext: Some(".mkv".to_string()),
+                ..Default::default()
+            },
+        );
+        let err = resolve_custom_rule(
+            "no_cmd",
+            vec![".mp4".into()],
+            None,
+            None,
+            None,
+            None,
+            None,
+            &registry,
+        )
+        .unwrap_err();
+        // Exact message preserved from the hand-written resolver.
+        assert_eq!(
+            err.to_string(),
+            "Custom preset 'no_cmd' has no command field"
+        );
+    }
+
+    #[test]
+    fn test_resolve_custom_rule_missing_preset_message() {
+        let registry = test_registry();
+        let err = resolve_custom_rule(
+            "ghost",
+            vec![".mp4".into()],
+            None,
+            None,
+            None,
+            None,
+            None,
+            &registry,
+        )
+        .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Custom preset 'ghost' not found in custom_presets.yaml"
+        );
     }
 
     #[test]

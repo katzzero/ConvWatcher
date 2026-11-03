@@ -70,7 +70,7 @@ pub async fn run_conversion<F, Fut>(
                 .await;
             crate::utils::path::handle_input_file(&file_path, &input_file_action, false);
             info!("[Processor] Job finished: {}", file_name);
-            let _ = health_server.clear_processing(&watcher_name);
+            let _ = health_server.clear_processing(&watcher_name, &file_name);
             return;
         }
     };
@@ -111,7 +111,7 @@ pub async fn run_conversion<F, Fut>(
     }
 
     info!("[Processor] Job finished: {}", file_name);
-    let _ = health_server.clear_processing(&watcher_name);
+    let _ = health_server.clear_processing(&watcher_name, &file_name);
 }
 
 fn cleanup_partial_output(path: &Path) {

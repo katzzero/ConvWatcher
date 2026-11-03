@@ -189,7 +189,10 @@ async function refresh() {
   const queue = qp.queue || {};
   let queueHtml = '';
   if (Object.keys(processing).length > 0) {
-    queueHtml += '<p>Processing: ' + Object.entries(processing).map(([k,v]) => escapeHtml(k) + ': ' + escapeHtml(v)).join(', ') + '</p>';
+    queueHtml += '<p>Processing: ' + Object.entries(processing).map(([k,v]) => {
+      const files = Array.isArray(v) ? v.join(', ') : v;
+      return escapeHtml(k) + ': ' + escapeHtml(files);
+    }).join(', ') + '</p>';
   }
   if (Object.keys(queue).length > 0) {
     queueHtml += '<p>Queue items: ' + Object.values(queue).reduce((a,b) => a + b.length, 0) + '</p>';

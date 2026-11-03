@@ -171,4 +171,19 @@ custom:
             _ => panic!("Expected Custom type"),
         }
     }
+
+    #[test]
+    fn test_embedded_unknown_field_is_rejected() {
+        let yaml = r#"
+secret: ""
+output_folder: /tmp/out
+type: video
+rules:
+  - preset: libx264
+    input_extensions: [.mp4]
+bogus_field: 1
+"#;
+        let parsed: Result<EmbeddedConfig, _> = serde_yaml::from_str(yaml);
+        assert!(parsed.is_err(), "unknown embedded field should be rejected");
+    }
 }

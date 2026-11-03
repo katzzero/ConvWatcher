@@ -81,6 +81,7 @@ pub async fn check_hardware_accel(ffmpeg_path: &str) -> HardwareAccelInfo {
 
 async fn get_encoders(ffmpeg_path: &str) -> Result<Vec<String>, String> {
     let output = Command::new(ffmpeg_path)
+        .kill_on_drop(true)
         .args(["-hide_banner", "-encoders"])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

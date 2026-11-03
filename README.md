@@ -512,6 +512,17 @@ cross build --release --target aarch64-unknown-linux-musl
 
 ---
 
+## Security / Hardenings
+
+- **Docker non-root**: the image runs as user `cw` (created with `useradd -r -s /bin/false --no-create-home`), no home directory, and the entrypoint runs under that user.
+- **Health server bind/auth**: the HTTP health/dashboard server binds to `127.0.0.1` by default. Optional bearer auth is available via `global.healthcheck.auth_token` (`Authorization: Bearer <token>`); `/health` stays open for container healthchecks. If you bind `0.0.0.0`, set a token or keep the port firewalled.
+- **embedded_secret**: required for per-watcher overrides promoted from a watch folder; when empty, those overrides are rejected (`.invalid` marker). Manual admin overrides placed in `config/watchs/` are still honored.
+- **`config/watchs/` is admin-only**: override files are validated (secret via constant-time compare, type matching) before promotion. Treat the directory as admin-controlled.
+- **ImageMagick removed**: ImageMagick is no longer in the conversion allowlist (removed from the Docker toolchain and processors). Do not re-add it.
+- **File permissions**: sensitive runtime files (logs, history, override configs) are created with `600` permissions; directories use `700`.
+
+---
+
 ## License
 
 MIT

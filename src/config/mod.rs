@@ -19,6 +19,20 @@ use watch::{WatchConfig, WatchType};
 
 const CONFIG_PATH: &str = "config/config.yaml";
 
+/// Get the config directory from an optional config path.
+/// If a custom path is provided, returns its parent directory.
+/// Otherwise, returns the default "config" directory.
+pub fn config_dir_for(custom_path: Option<&Path>) -> PathBuf {
+    custom_path
+        .map(|p| p.parent().unwrap_or(Path::new("config")).to_path_buf())
+        .unwrap_or_else(|| {
+            PathBuf::from(CONFIG_PATH)
+                .parent()
+                .unwrap_or(Path::new("config"))
+                .to_path_buf()
+        })
+}
+
 /// Secure file permissions: 600 (owner read/write only)
 #[cfg(unix)]
 const SECURE_FILE_MODE: u32 = 0o600;
@@ -166,7 +180,7 @@ pub fn load_config(
     Ok((global, watchers, registry))
 }
 
-fn validate_config(global: &GlobalConfig, watchers: &[WatchConfig]) -> Result<()> {
+pub fn validate_config(global: &GlobalConfig, watchers: &[WatchConfig]) -> Result<()> {
     // Reject zero max_concurrent_conversions (would deadlock)
     if global.max_concurrent_conversions == 0 {
         anyhow::bail!("max_concurrent must be >= 1");
@@ -201,8 +215,34 @@ fn validate_config(global: &GlobalConfig, watchers: &[WatchConfig]) -> Result<()
         validate_absolute_path(fp, "global.ffprobe_path")?;
     }
 
-    // Validate watcher paths
+    // Track watcher names for duplicate detection
+    let mut seen_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    // Validate watcher paths and names
     for watcher in watchers {
+        // Validate watcher.name is not empty
+        if watcher.name.is_empty() {
+            anyhow::bail!("Watcher name must not be empty");
+        }
+
+        // Validate watcher.name contains only valid characters (alphanumeric, _, -, .)
+        if !watcher
+            .name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-')
+        {
+            anyhow::bail!(
+                "Watcher name '{}' contains invalid characters (only alphanumeric, '_', '-', '.' allowed)",
+                watcher.name
+            );
+        }
+
+        // Check for duplicate names
+        if seen_names.contains(&watcher.name) {
+            anyhow::bail!("Duplicate watcher name: '{}'", watcher.name);
+        }
+        seen_names.insert(watcher.name.clone());
+
         if watcher.watch_folder.is_empty() {
             anyhow::bail!(
                 "Watcher '{}': watch_folder must be an absolute path, got empty string",
@@ -527,8 +567,8 @@ global:
 
   # Intervalo de scan para configs embutidas nas pastas monitoradas.
   # 0 = desabilita scan de embedded configs.
-  # Default: 0
-  embedded_scan_interval: 0
+  # Default: 10s
+  embedded_scan_interval: 10
 
   # Paths para arquivos de codec presets, relativos à pasta config/.
   codec_presets:
@@ -573,9 +613,15 @@ global:
     http_port: 8080
 
     # Endereço de bind do servidor HTTP.
-    # Use "127.0.0.1" para acesso local apenas.
-    # Default: "0.0.0.0"
-    bind_address: 0.0.0.0
+    # Use "127.0.0.1" para acesso local apenas; "0.0.0.0" expõe o painel.
+    # Default: "127.0.0.1"
+    bind_address: 127.0.0.1
+
+    # Token opcional (Authorization: Bearer <token>) para dashboard, APIs e logs.
+    # /health permanece aberto para o HEALTHCHECK do container.
+    # Vazio/ausente = sem autenticação.
+    # Default: "" (desabilitado)
+    auth_token: ""
 
   disk_space:
     # Intervalo entre verificações de espaço em disco.
@@ -1642,5 +1688,103 @@ mod tests {
         assert_eq!(parsed.watchers.len(), 1);
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_defaults_are_absolute_paths() {
+        let global = GlobalConfig::default();
+        // Defaults should be absolute paths (based on CWD)
+        assert!(
+            global.log.errors_file.starts_with('/'),
+            "log.errors_file must be absolute, got {}",
+            global.log.errors_file
+        );
+        assert!(
+            global.log.app_log_file.starts_with('/'),
+            "log.app_log_file must be absolute, got {}",
+            global.log.app_log_file
+        );
+        assert!(
+            global.history.file.starts_with('/'),
+            "history.file must be absolute, got {}",
+            global.history.file
+        );
+    }
+
+    #[test]
+    fn test_config_dir_for_default() {
+        let config_dir = config_dir_for(None);
+        assert!(config_dir.is_dir() || config_dir.ends_with("config"));
+    }
+
+    #[test]
+    fn test_config_dir_for_custom_path() {
+        let custom = std::path::Path::new("/tmp/test/config/config.yaml");
+        let config_dir = config_dir_for(Some(custom));
+        assert_eq!(config_dir, std::path::PathBuf::from("/tmp/test/config"));
+    }
+
+    #[test]
+    fn test_validate_config_rejects_empty_name() {
+        let global = test_global();
+        let watchers = vec![WatchConfig {
+            name: String::new(),
+            subfolders: Vec::new(),
+            watch_folder: "/app/inputs/test/".to_string(),
+            output_folder: "/app/outputs/test/".to_string(),
+            watch_type: WatchType::Video { rules: vec![] },
+        }];
+        let result = validate_config(&global, &watchers);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("name must not be empty"));
+    }
+
+    #[test]
+    fn test_validate_config_rejects_invalid_name_chars() {
+        let global = test_global();
+        let watchers = vec![WatchConfig {
+            name: "invalid@name!".to_string(),
+            subfolders: Vec::new(),
+            watch_folder: "/app/inputs/test/".to_string(),
+            output_folder: "/app/outputs/test/".to_string(),
+            watch_type: WatchType::Video { rules: vec![] },
+        }];
+        let result = validate_config(&global, &watchers);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("invalid characters"));
+    }
+
+    #[test]
+    fn test_validate_config_rejects_duplicate_names() {
+        let global = test_global();
+        let watchers = vec![
+            WatchConfig {
+                name: "duplicate".to_string(),
+                subfolders: Vec::new(),
+                watch_folder: "/app/inputs/test1/".to_string(),
+                output_folder: "/app/outputs/test1/".to_string(),
+                watch_type: WatchType::Video { rules: vec![] },
+            },
+            WatchConfig {
+                name: "duplicate".to_string(),
+                subfolders: Vec::new(),
+                watch_folder: "/app/inputs/test2/".to_string(),
+                output_folder: "/app/outputs/test2/".to_string(),
+                watch_type: WatchType::Video { rules: vec![] },
+            },
+        ];
+        let result = validate_config(&global, &watchers);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Duplicate watcher name"));
+    }
+
+    #[test]
+    fn test_embedded_scan_interval_default() {
+        let global = GlobalConfig::default();
+        // Default should be 10 seconds (OVERRIDE-DEFAULT-01)
+        assert_eq!(global.embedded_scan_interval_s, 10);
     }
 }

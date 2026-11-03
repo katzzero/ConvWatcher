@@ -7,7 +7,7 @@ use std::time::{Duration, Instant, SystemTime};
 use log::{error, info, warn};
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use subtle::ConstantTimeEq;
-use tokio::sync::{broadcast, mpsc, Mutex as TokioMutex};
+use tokio::sync::{broadcast, mpsc};
 
 use crate::config::embedded::EmbeddedConfig;
 use crate::config::global::GlobalConfig;
@@ -38,7 +38,8 @@ pub async fn run_file_monitor(
     mut shutdown_rx: broadcast::Receiver<()>,
     current_config: WatchConfig,
     global_config: GlobalConfig,
-    processing_files: Arc<TokioMutex<HashSet<PathBuf>>>,
+    processing_files: Arc<std::sync::Mutex<HashSet<PathBuf>>>,
+    config_dir: &Path,
 ) {
     info!("Starting monitor for: {}", watch_folder);
 
@@ -121,6 +122,7 @@ pub async fn run_file_monitor(
                     &health_server_clone,
                     &global_config,
                     &processing_files,
+                    config_dir,
                 ).await;
 
                 cleanup_stale_entries(&mut file_states, stable_time);
@@ -139,7 +141,8 @@ async fn scan_directory(
     tx: &mpsc::Sender<ConversionJob>,
     health_server: &Arc<HealthServer>,
     global_config: &GlobalConfig,
-    processing_files: &Arc<TokioMutex<HashSet<PathBuf>>>,
+    processing_files: &Arc<std::sync::Mutex<HashSet<PathBuf>>>,
+    config_dir: &Path,
 ) {
     let config_yaml_name = format!("{}.yaml", config.name);
     let config_yaml_path = watch_dir.join(&config_yaml_name);
@@ -168,7 +171,7 @@ async fn scan_directory(
                     if current_size != last_size {
                         file_states.insert(path.clone(), (Instant::now(), current_size));
                     } else if first_seen.elapsed() >= stable_time {
-                        validate_and_promote_config(&path, config, global_config);
+                        validate_and_promote_config(&path, config, global_config, config_dir);
                         file_states.remove(&path);
                     }
                 }
@@ -214,7 +217,7 @@ async fn scan_directory(
                     file_states.insert(path.clone(), (Instant::now(), current_size));
                 } else if first_seen.elapsed() >= stable_time {
                     let already_processing = {
-                        let mut pf = processing_files.lock().await;
+                        let mut pf = processing_files.lock().unwrap_or_else(|p| p.into_inner());
                         if pf.contains(&path) {
                             true
                         } else {
@@ -227,7 +230,10 @@ async fn scan_directory(
                         continue;
                     }
                     if !path.exists() {
-                        processing_files.lock().await.remove(&path);
+                        processing_files
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .remove(&path);
                         file_states.remove(&path);
                         continue;
                     }
@@ -238,21 +244,43 @@ async fn scan_directory(
                         watcher_name,
                         global_config.input_file_action.clone(),
                     ) {
-                        if tx.send(job).await.is_err() {
-                            error!("Failed to send job to job queue");
-                            processing_files.lock().await.remove(&path);
-                            file_states.remove(&path);
-                            continue;
+                        // BACKPRESSURE-01: use timeout when sending job
+                        match tokio::time::timeout(Duration::from_secs(5), tx.send(job)).await {
+                            Ok(Ok(_)) => {
+                                if matches!(
+                                    global_config.input_file_action,
+                                    crate::config::global::InputFileAction::None
+                                ) {
+                                    processed_files
+                                        .insert(path.clone(), (current_size, current_mtime));
+                                }
+                                let _ = health_server.enqueue(&file_name);
+                            }
+                            Ok(Err(_)) => {
+                                error!("Failed to send job to job queue");
+                                processing_files
+                                    .lock()
+                                    .unwrap_or_else(|p| p.into_inner())
+                                    .remove(&path);
+                                file_states.remove(&path);
+                                continue;
+                            }
+                            Err(_) => {
+                                // Timeout sending job - backpressure issue
+                                warn!("Timeout sending job for {} - dropping", file_name);
+                                processing_files
+                                    .lock()
+                                    .unwrap_or_else(|p| p.into_inner())
+                                    .remove(&path);
+                                file_states.remove(&path);
+                                continue;
+                            }
                         }
-                        if matches!(
-                            global_config.input_file_action,
-                            crate::config::global::InputFileAction::None
-                        ) {
-                            processed_files.insert(path.clone(), (current_size, current_mtime));
-                        }
-                        let _ = health_server.enqueue(&file_name);
                     } else {
-                        processing_files.lock().await.remove(&path);
+                        processing_files
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .remove(&path);
                     }
                     file_states.remove(&path);
                 }
@@ -309,7 +337,12 @@ fn collect_scan_files(watch_dir: &Path) -> Vec<PathBuf> {
     files
 }
 
-fn validate_and_promote_config(config_path: &Path, manifest: &WatchConfig, global: &GlobalConfig) {
+fn validate_and_promote_config(
+    config_path: &Path,
+    manifest: &WatchConfig,
+    global: &GlobalConfig,
+    config_dir: &Path,
+) {
     // Reject names with path separators or directory traversal.
     let name = &manifest.name;
     if name.contains('/') || name.contains('\\') || name.contains("..") {
@@ -387,13 +420,23 @@ fn validate_and_promote_config(config_path: &Path, manifest: &WatchConfig, globa
         return;
     }
 
-    let watchs_dir = PathBuf::from("config/watchs");
+    // WATCHS-01: use config_dir parameter for watchs directory
+    let watchs_dir = config_dir.join("watchs");
     if let Err(e) = std::fs::create_dir_all(&watchs_dir) {
         warn!("Failed to create watchs dir: {}", e);
         return;
     }
 
     let dest = watchs_dir.join(format!("{}.yaml", manifest.name));
+
+    // COPY-01: preserve existing destination with backup before copy
+    if dest.exists() {
+        let backup_path = dest.with_extension("yaml.prev");
+        if let Err(e) = std::fs::rename(&dest, &backup_path) {
+            warn!("Failed to backup existing config {:?}: {}", dest, e);
+        }
+    }
+
     if let Err(e) = std::fs::copy(config_path, &dest) {
         warn!("Failed to promote config to {:?}: {}", dest, e);
         return;
@@ -885,5 +928,33 @@ mod scan_tests {
             crate::config::global::InputFileAction::Mark,
         );
         assert!(job.is_some(), "->GPU should match subfolder rule 'gpu'");
+    }
+
+    #[test]
+    fn test_processing_files_tracking() {
+        use std::sync::Arc;
+
+        // Test that processing_files can be tracked and removed
+        let processing_files: Arc<std::sync::Mutex<HashSet<PathBuf>>> =
+            Arc::new(std::sync::Mutex::new(HashSet::new()));
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let path = PathBuf::from("/tmp/test.mp4");
+
+            // Insert should succeed
+            {
+                let mut pf = processing_files.lock().unwrap_or_else(|p| p.into_inner());
+                pf.insert(path.clone());
+                assert!(pf.contains(&path));
+            }
+
+            // Remove should succeed
+            {
+                let mut pf = processing_files.lock().unwrap_or_else(|p| p.into_inner());
+                pf.remove(&path);
+                assert!(!pf.contains(&path));
+            }
+        });
     }
 }

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -9,6 +9,7 @@ use std::os::unix::fs::OpenOptionsExt;
 
 use anyhow::Result;
 use log::{error, info};
+use subtle::ConstantTimeEq;
 
 use crate::config::watch::{WatchConfig, WatchType};
 use crate::utils::hardware::HardwareAccelInfo;
@@ -25,7 +26,7 @@ pub struct HealthServer {
 
     watchers: Arc<Mutex<Vec<WatcherInfo>>>,
     queue: Arc<Mutex<HashMap<String, Vec<String>>>>,
-    processing: Arc<Mutex<HashMap<String, String>>>,
+    processing: Arc<Mutex<HashMap<String, HashSet<String>>>>,
     history: Arc<Mutex<Vec<ConversionRecord>>>,
     processed: Arc<AtomicU64>,
     errors: Arc<AtomicU64>,
@@ -37,6 +38,7 @@ pub struct HealthServer {
     history_file: Option<String>,
     history_persistent: bool,
     max_records: usize,
+    auth_token: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -62,6 +64,12 @@ pub struct ConversionRecord {
     pub output: String,
 }
 
+fn token_matches(token: &str, header: Option<&str>) -> bool {
+    header
+        .and_then(|h| h.strip_prefix("Bearer "))
+        .is_some_and(|value| bool::from(value.as_bytes().ct_eq(token.as_bytes())))
+}
+
 impl HealthServer {
     pub fn new(port: u16, bind_address: String, max_records: usize) -> Self {
         Self {
@@ -81,6 +89,7 @@ impl HealthServer {
             history_file: None,
             history_persistent: false,
             max_records,
+            auth_token: None,
         }
     }
 
@@ -97,6 +106,28 @@ impl HealthServer {
     pub fn with_app_log(mut self, path: String) -> Self {
         self.app_log_path = Some(path);
         self
+    }
+
+    pub fn with_auth_token(mut self, token: Option<String>) -> Self {
+        self.auth_token = token.filter(|t| !t.is_empty());
+        self
+    }
+
+    fn authorized(&self, request: &tiny_http::Request, path: &str) -> bool {
+        let token = match self.auth_token.as_deref() {
+            Some(token) => token,
+            None => return true,
+        };
+        // Container healthchecks must keep working without credentials.
+        if path == "/health" {
+            return true;
+        }
+        let provided = request
+            .headers()
+            .iter()
+            .find(|h| h.field.equiv("Authorization"))
+            .map(|h| h.value.as_str());
+        token_matches(token, provided)
     }
 
     pub fn stop(&self) {
@@ -136,13 +167,18 @@ impl HealthServer {
 
     pub fn set_processing(&self, watcher: String, file: String) -> Result<()> {
         let mut map = self.processing.lock().unwrap_or_else(|p| p.into_inner());
-        map.insert(watcher, file);
+        map.entry(watcher).or_default().insert(file);
         Ok(())
     }
 
-    pub fn clear_processing(&self, watcher: &str) -> Result<()> {
+    pub fn clear_processing(&self, watcher: &str, file: &str) -> Result<()> {
         let mut map = self.processing.lock().unwrap_or_else(|p| p.into_inner());
-        map.remove(watcher);
+        if let Some(files) = map.get_mut(watcher) {
+            files.remove(file);
+            if files.is_empty() {
+                map.remove(watcher);
+            }
+        }
         Ok(())
     }
 
@@ -243,6 +279,18 @@ impl HealthServer {
             let method = request.method().clone();
             let path = url.as_str();
 
+            if !self.authorized(&request, path) {
+                let mut response =
+                    tiny_http::Response::from_string("Unauthorized").with_status_code(401);
+                if let Ok(header) =
+                    tiny_http::Header::from_bytes(&b"WWW-Authenticate"[..], &b"Bearer"[..])
+                {
+                    response.add_header(header);
+                }
+                let _ = request.respond(response);
+                continue;
+            }
+
             let json_ct =
                 tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
                     .unwrap();
@@ -273,12 +321,13 @@ impl HealthServer {
                     let queue = self.queue.lock().unwrap_or_else(|p| p.into_inner());
                     let processing = self.processing.lock().unwrap_or_else(|p| p.into_inner());
                     let queue_count: usize = queue.values().map(|v| v.len()).sum();
+                    let processing_count: usize = processing.values().map(|s| s.len()).sum();
                     let response = serde_json::json!({
                         "status": "ok",
                         "uptime": uptime_str,
                         "watchers": watchers.len(),
                         "queue": queue_count,
-                        "processing": processing.len(),
+                        "processing": processing_count,
                         "processed": self.processed.load(Ordering::SeqCst),
                         "errors": self.errors.load(Ordering::SeqCst),
                         "disk_space": {}
@@ -607,4 +656,110 @@ fn format_rules_custom(rules: &[crate::config::watch::CustomRule]) -> Vec<String
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_test_health_server() -> HealthServer {
+        HealthServer::new(8080, "127.0.0.1".to_string(), 100)
+    }
+
+    #[test]
+    fn test_set_processing_adds_to_set() {
+        let server = create_test_health_server();
+        server
+            .set_processing("watcher1".to_string(), "file1.mp4".to_string())
+            .unwrap();
+
+        let processing = server.processing.lock().unwrap();
+        assert!(processing.contains_key("watcher1"));
+
+        let files = processing.get("watcher1").unwrap();
+        assert!(files.contains("file1.mp4"));
+    }
+
+    #[test]
+    fn test_set_processing_multiple_files_same_watcher() {
+        let server = create_test_health_server();
+
+        server
+            .set_processing("watcher1".to_string(), "file1.mp4".to_string())
+            .unwrap();
+        server
+            .set_processing("watcher1".to_string(), "file2.mp4".to_string())
+            .unwrap();
+        server
+            .set_processing("watcher1".to_string(), "file3.mp4".to_string())
+            .unwrap();
+
+        let processing = server.processing.lock().unwrap();
+        let files = processing.get("watcher1").unwrap();
+        assert_eq!(files.len(), 3);
+        assert!(files.contains("file1.mp4"));
+        assert!(files.contains("file2.mp4"));
+        assert!(files.contains("file3.mp4"));
+    }
+
+    #[test]
+    fn test_clear_processing_removes_specific_file() {
+        let server = create_test_health_server();
+
+        server
+            .set_processing("watcher1".to_string(), "file1.mp4".to_string())
+            .unwrap();
+        server
+            .set_processing("watcher1".to_string(), "file2.mp4".to_string())
+            .unwrap();
+
+        server.clear_processing("watcher1", "file1.mp4").unwrap();
+
+        let processing = server.processing.lock().unwrap();
+        let files = processing.get("watcher1").unwrap();
+        assert_eq!(files.len(), 1);
+        assert!(!files.contains("file1.mp4"));
+        assert!(files.contains("file2.mp4"));
+    }
+
+    #[test]
+    fn test_clear_processing_removes_watcher_when_empty() {
+        let server = create_test_health_server();
+
+        server
+            .set_processing("watcher1".to_string(), "file1.mp4".to_string())
+            .unwrap();
+
+        server.clear_processing("watcher1", "file1.mp4").unwrap();
+
+        let processing = server.processing.lock().unwrap();
+        assert!(!processing.contains_key("watcher1"));
+    }
+
+    #[test]
+    fn test_processing_count_after_multiple_watchers() {
+        let server = create_test_health_server();
+
+        server
+            .set_processing("watcher1".to_string(), "file1.mp4".to_string())
+            .unwrap();
+        server
+            .set_processing("watcher1".to_string(), "file2.mp4".to_string())
+            .unwrap();
+        server
+            .set_processing("watcher2".to_string(), "file3.mp4".to_string())
+            .unwrap();
+
+        let processing = server.processing.lock().unwrap();
+        let total_count: usize = processing.values().map(|s| s.len()).sum();
+        assert_eq!(total_count, 3);
+    }
+
+    #[test]
+    fn test_token_matches_bearer() {
+        assert!(token_matches("s3cret", Some("Bearer s3cret")));
+        assert!(!token_matches("s3cret", Some("Bearer wrong")));
+        assert!(!token_matches("s3cret", Some("s3cret")));
+        assert!(!token_matches("s3cret", None));
+    }
 }

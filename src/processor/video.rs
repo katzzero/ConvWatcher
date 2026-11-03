@@ -8,7 +8,7 @@ use tokio::process::Command;
 
 use crate::config::global::DiskSpaceConfig;
 use crate::config::watch::VideoRule;
-use crate::health::server::HealthServer;
+use crate::health::server::{ConversionRecord, HealthServer};
 use crate::logs::error_logger::ErrorLogger;
 use crate::utils::path::get_base_name;
 
@@ -30,10 +30,22 @@ pub async fn process_video(
     input_file_action: crate::config::global::InputFileAction,
 ) {
     if check_disk_space(output_folder, watch_folder, disk_config).await {
-        warn!(
+        let msg = format!(
             "Disk space low — pausing conversion of {} until space is freed",
             file_name
         );
+        warn!("{}", msg);
+        error_logger.log(&msg, &file_name, "video");
+        let _ = health_server.increment_error(&watcher_name);
+        let _ = health_server
+            .add_history(ConversionRecord {
+                time: chrono::Local::now().format("%H:%M:%S").to_string(),
+                watcher: watcher_name.clone(),
+                file: file_name.clone(),
+                status: "error".to_string(),
+                output: String::new(),
+            })
+            .await;
         return;
     }
 
@@ -223,15 +235,41 @@ pub fn parse_quality_value(quality_str: &str) -> Vec<String> {
     }
 }
 
+/// Find the first available VAAPI device in /dev/dri.
+/// Returns the path to the first renderD* device found, or /dev/dri/renderD128 as fallback.
+/// Devices are sorted deterministically by name.
+fn find_vaapi_device() -> String {
+    const FALLBACK_DEVICE: &str = "/dev/dri/renderD128";
+
+    // Try to list devices in /dev/dri
+    match std::fs::read_dir("/dev/dri") {
+        Ok(entries) => {
+            let mut render_devices: Vec<String> = entries
+                .filter_map(|e| e.ok())
+                .filter_map(|e| e.file_name().to_str().map(|s| s.to_string()))
+                .filter(|name| name.starts_with("renderD"))
+                .collect();
+
+            // Sort for deterministic ordering
+            render_devices.sort();
+
+            if let Some(device) = render_devices.first() {
+                return format!("/dev/dri/{}", device);
+            }
+
+            FALLBACK_DEVICE.to_string()
+        }
+        Err(_) => FALLBACK_DEVICE.to_string(),
+    }
+}
+
 /// Build hardware acceleration arguments for the given codec.
 /// Returns (pre_input_args, post_input_args) to position around -i <input>.
 fn build_hwaccel_args(codec: &str) -> (Vec<String>, Vec<String>) {
     if codec.contains("_vaapi") {
+        let device = find_vaapi_device();
         (
-            vec![
-                "-vaapi_device".to_string(),
-                "/dev/dri/renderD128".to_string(),
-            ],
+            vec!["-vaapi_device".to_string(), device],
             vec!["-vf".to_string(), "format=nv12,hwupload".to_string()],
         )
     } else if codec.contains("_qsv") {
@@ -506,6 +544,42 @@ mod tests {
         assert!(
             (duration - 1.835).abs() < 0.05,
             "expected duration ~1.835s, got {duration}s — if 0.0, this is the 02 §H5 ffprobe bug"
+        );
+    }
+
+    #[test]
+    fn test_find_vaapi_device_fallback_when_no_dri() {
+        // When /dev/dri doesn't exist or is unreadable, should fallback to renderD128
+        // This test assumes /dev/dri may or may not exist in the test environment
+        let device = find_vaapi_device();
+        // Device should either be a renderD device or the fallback
+        assert!(
+            device.starts_with("/dev/dri/renderD"),
+            "Expected device to start with /dev/dri/renderD, got {}",
+            device
+        );
+    }
+
+    #[test]
+    fn test_build_hwaccel_args_vaapi_returns_device() {
+        let (pre, post) = build_hwaccel_args("h264_vaapi");
+        assert!(
+            pre.contains(&"-vaapi_device".to_string()),
+            "Should contain -vaapi_device flag"
+        );
+        // The device should be a valid /dev/dri/renderD* path or fallback
+        let device = pre.iter().find(|s| s.starts_with("/dev/dri/"));
+        assert!(device.is_some(), "Should have a device path");
+        if let Some(d) = device {
+            assert!(
+                d.contains("renderD"),
+                "Device should contain renderD, got {}",
+                d
+            );
+        }
+        assert!(
+            post.contains(&"-vf".to_string()),
+            "Should contain -vf filter"
         );
     }
 }

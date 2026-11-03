@@ -52,7 +52,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libv4l-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# Supply-chain pin: nyanmisaka/mpp @ jellyfin-mpp -> 848b885f95587994a53216e435f650041a894e31
 RUN git clone --depth 1 --branch jellyfin-mpp https://github.com/nyanmisaka/mpp.git /tmp/mpp && \
+    cd /tmp/mpp && git fetch --depth 1 origin 848b885f95587994a53216e435f650041a894e31 && \
+    git checkout 848b885f95587994a53216e435f650041a894e31 && \
     mkdir -p /tmp/mpp/build && \
     cd /tmp/mpp/build && \
     cmake -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE=Release -DBUILD_TEST=OFF -DBUILD_DEC_TEST=OFF -DBUILD_ENC_TEST=OFF .. && \
@@ -60,8 +63,10 @@ RUN git clone --depth 1 --branch jellyfin-mpp https://github.com/nyanmisaka/mpp.
     make install && \
     rm -rf /tmp/mpp
 
+# Supply-chain pin: nyanmisaka/ffmpeg-rockchip @ 7.1 -> 8b4385e985c0a50bf7d3f96cf3cb6d0b63c53e6c
 RUN git clone --depth 1 --branch 7.1 https://github.com/nyanmisaka/ffmpeg-rockchip.git /tmp/ffmpeg && \
-    cd /tmp/ffmpeg && \
+    cd /tmp/ffmpeg && git fetch --depth 1 origin 8b4385e985c0a50bf7d3f96cf3cb6d0b63c53e6c && \
+    git checkout 8b4385e985c0a50bf7d3f96cf3cb6d0b63c53e6c && \
     ./configure \
         --prefix=/usr \
         --enable-gpl \
@@ -138,14 +143,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # NVENC requires the NVIDIA codec headers (not shipped in Ubuntu repos).
+# Supply-chain pin: FFmpeg/nv-codec-headers @ master -> f2053071ea93137255b6dcf42e9b4c9e0965a44e
 RUN git clone --depth 1 https://github.com/FFmpeg/nv-codec-headers.git /tmp/nv-codec-headers && \
-    cd /tmp/nv-codec-headers && \
+    cd /tmp/nv-codec-headers && git fetch --depth 1 origin f2053071ea93137255b6dcf42e9b4c9e0965a44e && \
+    git checkout f2053071ea93137255b6dcf42e9b4c9e0965a44e && \
     make -j$(nproc) && \
     make install && \
     rm -rf /tmp/nv-codec-headers
 
+# Supply-chain pin: FFmpeg/FFmpeg @ n7.1 -> 507a51fbe9732f0f6f12f43ce12431e8faa834b7
 RUN git clone --depth 1 --branch n7.1 https://github.com/FFmpeg/FFmpeg.git /tmp/ffmpeg && \
-    cd /tmp/ffmpeg && \
+    cd /tmp/ffmpeg && git fetch --depth 1 origin 507a51fbe9732f0f6f12f43ce12431e8faa834b7 && \
+    git checkout 507a51fbe9732f0f6f12f43ce12431e8faa834b7 && \
     ./configure \
         --prefix=/usr \
         --enable-gpl \

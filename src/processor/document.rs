@@ -8,7 +8,7 @@ use tokio::process::Command;
 
 use crate::config::global::DiskSpaceConfig;
 use crate::config::watch::DocumentRule;
-use crate::health::server::HealthServer;
+use crate::health::server::{ConversionRecord, HealthServer};
 use crate::logs::error_logger::ErrorLogger;
 use crate::utils::path::get_base_name;
 
@@ -28,10 +28,22 @@ pub async fn process_document(
     input_file_action: crate::config::global::InputFileAction,
 ) {
     if check_disk_space(output_folder, watch_folder, disk_config).await {
-        warn!(
+        let msg = format!(
             "Disk space low — pausing conversion of {} until space is freed",
             file_name
         );
+        warn!("{}", msg);
+        error_logger.log(&msg, &file_name, "document");
+        let _ = health_server.increment_error(&watcher_name);
+        let _ = health_server
+            .add_history(ConversionRecord {
+                time: chrono::Local::now().format("%H:%M:%S").to_string(),
+                watcher: watcher_name.clone(),
+                file: file_name.clone(),
+                status: "error".to_string(),
+                output: String::new(),
+            })
+            .await;
         return;
     }
 

@@ -41,6 +41,11 @@ fn default_input_action() -> InputFileAction {
 fn default_timeout_s() -> u64 {
     3600
 }
+fn default_embedded_scan_interval() -> u64 {
+    // Default: scan for embedded overrides every 10 seconds.
+    // Set to 0 to disable embedded config scanning.
+    10
+}
 
 /// Parse a duration string like "2s", "5m", "500ms", "1h" into milliseconds.
 /// A bare integer is treated as milliseconds.
@@ -212,7 +217,10 @@ pub struct GlobalConfig {
     #[serde(default)]
     pub embedded_secret: String,
 
-    #[serde(default, alias = "embedded_scan_interval")]
+    #[serde(
+        default = "default_embedded_scan_interval",
+        alias = "embedded_scan_interval"
+    )]
     pub embedded_scan_interval_s: u64,
 
     #[serde(default = "default_codec_presets")]
@@ -247,7 +255,7 @@ impl Default for GlobalConfig {
             max_concurrent_conversions: default_max_concurrent(),
             config_refresh_interval_s: default_config_refresh(),
             embedded_secret: String::new(),
-            embedded_scan_interval_s: 0,
+            embedded_scan_interval_s: default_embedded_scan_interval(),
             codec_presets: default_codec_presets(),
             log: default_log_config(),
             healthcheck: default_healthcheck(),
@@ -289,10 +297,14 @@ pub struct LogConfig {
 }
 
 fn default_errors_file() -> String {
-    "./logs/errors.log".to_string()
+    std::env::current_dir()
+        .map(|cwd| cwd.join("logs/errors.log").to_string_lossy().to_string())
+        .unwrap_or_else(|_| "./logs/errors.log".to_string())
 }
 fn default_app_log_file() -> String {
-    "./logs/app.log".to_string()
+    std::env::current_dir()
+        .map(|cwd| cwd.join("logs/app.log").to_string_lossy().to_string())
+        .unwrap_or_else(|_| "./logs/app.log".to_string())
 }
 fn default_max_log_files() -> u32 {
     30
@@ -324,6 +336,10 @@ pub struct HealthcheckConfig {
     pub http_port: u16,
     #[serde(default = "default_bind_address")]
     pub bind_address: String,
+    /// Optional bearer token for dashboard/API/logs. `/health` stays open for
+    /// container healthchecks. Empty/None disables authentication.
+    #[serde(default)]
+    pub auth_token: Option<String>,
 }
 
 fn default_http_port() -> u16 {
@@ -338,6 +354,7 @@ impl Default for HealthcheckConfig {
         Self {
             http_port: default_http_port(),
             bind_address: default_bind_address(),
+            auth_token: None,
         }
     }
 }
@@ -494,7 +511,9 @@ pub struct HistoryConfig {
 }
 
 fn default_history_file() -> String {
-    "./logs/history.json".to_string()
+    std::env::current_dir()
+        .map(|cwd| cwd.join("logs/history.json").to_string_lossy().to_string())
+        .unwrap_or_else(|_| "./logs/history.json".to_string())
 }
 fn default_max_records() -> usize {
     500
