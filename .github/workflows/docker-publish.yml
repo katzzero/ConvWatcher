@@ -17,6 +17,10 @@ jobs:
   audit:
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event_name == 'pull_request'
+    # cargo-audit's current release needs a newer rustc than the 1.95 pinned
+    # for the build; use stable only for the audit tooling.
+    env:
+      RUSTUP_TOOLCHAIN: stable
     steps:
       # actions/checkout@v4 -> 11d5960a326750d5838078e36cf38b85af677262
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
