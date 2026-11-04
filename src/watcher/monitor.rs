@@ -11,9 +11,94 @@ use tokio::sync::{broadcast, mpsc};
 
 use crate::config::embedded::EmbeddedConfig;
 use crate::config::global::GlobalConfig;
-use crate::config::watch::{WatchConfig, WatchType};
+use crate::config::watch::{
+    AudioRule, CustomRule, DocumentRule, ImageRule, PdfRule, VideoRule, WatchConfig, WatchType,
+};
 use crate::health::server::HealthServer;
 use crate::processor::job::{ConversionJob, MatchedRule};
+
+/// Trait for types that have rule-based matching with subfolder and extension support.
+/// Implemented by all rule types to enable generic matching logic.
+trait RuleMatcher {
+    /// Returns the subfolder name if this rule is for a specific subfolder, or None for root folder rules.
+    fn subfolder(&self) -> Option<&str>;
+    /// Returns the list of input extensions this rule accepts.
+    fn input_extensions(&self) -> &[String];
+    /// Converts this rule into a MatchedRule variant.
+    fn to_matched_rule(&self) -> MatchedRule;
+}
+
+impl RuleMatcher for VideoRule {
+    fn subfolder(&self) -> Option<&str> {
+        self.subfolder.as_deref()
+    }
+    fn input_extensions(&self) -> &[String] {
+        &self.input_extensions
+    }
+    fn to_matched_rule(&self) -> MatchedRule {
+        MatchedRule::Video(self.clone())
+    }
+}
+
+impl RuleMatcher for ImageRule {
+    fn subfolder(&self) -> Option<&str> {
+        self.subfolder.as_deref()
+    }
+    fn input_extensions(&self) -> &[String] {
+        &self.input_extensions
+    }
+    fn to_matched_rule(&self) -> MatchedRule {
+        MatchedRule::Image(self.clone())
+    }
+}
+
+impl RuleMatcher for AudioRule {
+    fn subfolder(&self) -> Option<&str> {
+        self.subfolder.as_deref()
+    }
+    fn input_extensions(&self) -> &[String] {
+        &self.input_extensions
+    }
+    fn to_matched_rule(&self) -> MatchedRule {
+        MatchedRule::Audio(self.clone())
+    }
+}
+
+impl RuleMatcher for PdfRule {
+    fn subfolder(&self) -> Option<&str> {
+        self.subfolder.as_deref()
+    }
+    fn input_extensions(&self) -> &[String] {
+        &self.input_extensions
+    }
+    fn to_matched_rule(&self) -> MatchedRule {
+        MatchedRule::Pdf(self.clone())
+    }
+}
+
+impl RuleMatcher for DocumentRule {
+    fn subfolder(&self) -> Option<&str> {
+        self.subfolder.as_deref()
+    }
+    fn input_extensions(&self) -> &[String] {
+        &self.input_extensions
+    }
+    fn to_matched_rule(&self) -> MatchedRule {
+        MatchedRule::Document(self.clone())
+    }
+}
+
+impl RuleMatcher for CustomRule {
+    fn subfolder(&self) -> Option<&str> {
+        self.subfolder.as_deref()
+    }
+    fn input_extensions(&self) -> &[String] {
+        &self.input_extensions
+    }
+    fn to_matched_rule(&self) -> MatchedRule {
+        MatchedRule::Custom(self.clone())
+    }
+}
 
 /// Type alias for the file stability state machine.
 /// `(first_seen: Instant, last_size: u64)` maps to a (file_path → FileState) in
@@ -468,11 +553,7 @@ fn create_invalid_marker(config_path: &Path, manifest: &WatchConfig) {
     }
 }
 
-fn find_matching_rule(
-    file_path: &Path,
-    _file_name: &str,
-    watch_type: &WatchType,
-) -> Option<MatchedRule> {
+fn find_matching_rule(file_path: &Path, watch_type: &WatchType) -> Option<MatchedRule> {
     let file_ext = file_path
         .extension()
         .map(|e| format!(".{}", e.to_string_lossy().to_lowercase()))
@@ -485,95 +566,42 @@ fn find_matching_rule(
         .filter(|s| s.starts_with("->"))
         .map(|s| s[2..].to_lowercase());
 
-    if let Some(ref fmt) = subfolder_format {
-        // Subfolder rules must also match the file extension (03 §H7).
-        let matched = match watch_type {
-            WatchType::Video { rules } => rules
+    // Helper function to find matching rule using the RuleMatcher trait
+    fn find_rule<R: RuleMatcher>(
+        rules: &[R],
+        subfolder_format: &Option<String>,
+        file_ext: &str,
+    ) -> Option<MatchedRule> {
+        if let Some(ref fmt) = subfolder_format {
+            // Subfolder rules must also match the file extension (03 §H7).
+            let matched = rules
                 .iter()
                 .find(|r| {
-                    r.subfolder
-                        .as_deref()
-                        .is_some_and(|s| s.eq_ignore_ascii_case(fmt))
-                        && r.input_extensions.contains(&file_ext)
+                    r.subfolder().is_some_and(|s| s.eq_ignore_ascii_case(fmt))
+                        && r.input_extensions().contains(&file_ext.to_string())
                 })
-                .map(|r| MatchedRule::Video(r.clone())),
-            WatchType::Image { rules } => rules
-                .iter()
-                .find(|r| {
-                    r.subfolder
-                        .as_deref()
-                        .is_some_and(|s| s.eq_ignore_ascii_case(fmt))
-                        && r.input_extensions.contains(&file_ext)
-                })
-                .map(|r| MatchedRule::Image(r.clone())),
-            WatchType::Audio { rules } => rules
-                .iter()
-                .find(|r| {
-                    r.subfolder
-                        .as_deref()
-                        .is_some_and(|s| s.eq_ignore_ascii_case(fmt))
-                        && r.input_extensions.contains(&file_ext)
-                })
-                .map(|r| MatchedRule::Audio(r.clone())),
-            WatchType::Pdf { rules } => rules
-                .iter()
-                .find(|r| {
-                    r.subfolder
-                        .as_deref()
-                        .is_some_and(|s| s.eq_ignore_ascii_case(fmt))
-                        && r.input_extensions.contains(&file_ext)
-                })
-                .map(|r| MatchedRule::Pdf(r.clone())),
-            WatchType::Document { rules } => rules
-                .iter()
-                .find(|r| {
-                    r.subfolder
-                        .as_deref()
-                        .is_some_and(|s| s.eq_ignore_ascii_case(fmt))
-                        && r.input_extensions.contains(&file_ext)
-                })
-                .map(|r| MatchedRule::Document(r.clone())),
-            WatchType::Custom { rules } => rules
-                .iter()
-                .find(|r| {
-                    r.subfolder
-                        .as_deref()
-                        .is_some_and(|s| s.eq_ignore_ascii_case(fmt))
-                        && r.input_extensions.contains(&file_ext)
-                })
-                .map(|r| MatchedRule::Custom(r.clone())),
-        };
+                .map(|r| r.to_matched_rule());
 
-        if matched.is_some() {
-            return matched;
+            if matched.is_some() {
+                return matched;
+            }
         }
+
+        rules
+            .iter()
+            .find(|r| {
+                r.subfolder().is_none() && r.input_extensions().contains(&file_ext.to_string())
+            })
+            .map(|r| r.to_matched_rule())
     }
 
     match watch_type {
-        WatchType::Video { rules } => rules
-            .iter()
-            .find(|r| r.subfolder.is_none() && r.input_extensions.contains(&file_ext))
-            .map(|r| MatchedRule::Video(r.clone())),
-        WatchType::Image { rules } => rules
-            .iter()
-            .find(|r| r.subfolder.is_none() && r.input_extensions.contains(&file_ext))
-            .map(|r| MatchedRule::Image(r.clone())),
-        WatchType::Audio { rules } => rules
-            .iter()
-            .find(|r| r.subfolder.is_none() && r.input_extensions.contains(&file_ext))
-            .map(|r| MatchedRule::Audio(r.clone())),
-        WatchType::Pdf { rules } => rules
-            .iter()
-            .find(|r| r.subfolder.is_none() && r.input_extensions.contains(&file_ext))
-            .map(|r| MatchedRule::Pdf(r.clone())),
-        WatchType::Document { rules } => rules
-            .iter()
-            .find(|r| r.subfolder.is_none() && r.input_extensions.contains(&file_ext))
-            .map(|r| MatchedRule::Document(r.clone())),
-        WatchType::Custom { rules } => rules
-            .iter()
-            .find(|r| r.subfolder.is_none() && r.input_extensions.contains(&file_ext))
-            .map(|r| MatchedRule::Custom(r.clone())),
+        WatchType::Video { rules } => find_rule(rules, &subfolder_format, &file_ext),
+        WatchType::Image { rules } => find_rule(rules, &subfolder_format, &file_ext),
+        WatchType::Audio { rules } => find_rule(rules, &subfolder_format, &file_ext),
+        WatchType::Pdf { rules } => find_rule(rules, &subfolder_format, &file_ext),
+        WatchType::Document { rules } => find_rule(rules, &subfolder_format, &file_ext),
+        WatchType::Custom { rules } => find_rule(rules, &subfolder_format, &file_ext),
     }
 }
 
@@ -584,7 +612,7 @@ fn create_job(
     watcher_name: &str,
     input_file_action: crate::config::global::InputFileAction,
 ) -> Option<ConversionJob> {
-    find_matching_rule(file_path, file_name, &watch_config.watch_type).map(|rule| ConversionJob {
+    find_matching_rule(file_path, &watch_config.watch_type).map(|rule| ConversionJob {
         watcher_name: watcher_name.to_string(),
         file_name: file_name.to_string(),
         file_path: file_path.to_path_buf(),
@@ -626,30 +654,12 @@ pub fn create_folders(watch_config: &WatchConfig) -> anyhow::Result<()> {
 
 fn rule_subfolder_names(watch_type: &WatchType) -> Vec<&str> {
     match watch_type {
-        WatchType::Video { rules } => rules
-            .iter()
-            .filter_map(|r| r.subfolder.as_deref())
-            .collect(),
-        WatchType::Image { rules } => rules
-            .iter()
-            .filter_map(|r| r.subfolder.as_deref())
-            .collect(),
-        WatchType::Audio { rules } => rules
-            .iter()
-            .filter_map(|r| r.subfolder.as_deref())
-            .collect(),
-        WatchType::Pdf { rules } => rules
-            .iter()
-            .filter_map(|r| r.subfolder.as_deref())
-            .collect(),
-        WatchType::Document { rules } => rules
-            .iter()
-            .filter_map(|r| r.subfolder.as_deref())
-            .collect(),
-        WatchType::Custom { rules } => rules
-            .iter()
-            .filter_map(|r| r.subfolder.as_deref())
-            .collect(),
+        WatchType::Video { rules } => rules.iter().filter_map(|r| r.subfolder()).collect(),
+        WatchType::Image { rules } => rules.iter().filter_map(|r| r.subfolder()).collect(),
+        WatchType::Audio { rules } => rules.iter().filter_map(|r| r.subfolder()).collect(),
+        WatchType::Pdf { rules } => rules.iter().filter_map(|r| r.subfolder()).collect(),
+        WatchType::Document { rules } => rules.iter().filter_map(|r| r.subfolder()).collect(),
+        WatchType::Custom { rules } => rules.iter().filter_map(|r| r.subfolder()).collect(),
     }
 }
 
@@ -666,7 +676,9 @@ fn cleanup_stale_entries(file_states: &mut HashMap<PathBuf, FileState>, stable_t
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::watch::{VideoRule, WatchConfig, WatchType};
+    use crate::config::watch::{
+        AudioRule, CustomRule, DocumentRule, ImageRule, PdfRule, VideoRule, WatchConfig, WatchType,
+    };
 
     pub(super) fn test_video_config() -> WatchConfig {
         WatchConfig {
@@ -703,6 +715,128 @@ mod tests {
                         min_duration_ratio: None,
                     },
                 ],
+            },
+        }
+    }
+
+    pub(super) fn test_image_config() -> WatchConfig {
+        WatchConfig {
+            name: "test_image".to_string(),
+            subfolders: Vec::new(),
+            watch_folder: "/app/inputs/test_image/".to_string(),
+            output_folder: "/app/outputs/test_image/".to_string(),
+            watch_type: WatchType::Image {
+                rules: vec![
+                    ImageRule {
+                        preset: "imagemagick".to_string(),
+                        subfolder: None,
+                        input_extensions: vec![".png".into(), ".jpg".into()],
+                        output_ext: None,
+                        quality: None,
+                        transparent: None,
+                        output_name: None,
+                    },
+                    ImageRule {
+                        preset: "imagemagick_thumb".to_string(),
+                        subfolder: Some("thumb".to_string()),
+                        input_extensions: vec![".png".into()],
+                        output_ext: None,
+                        quality: Some(150),
+                        transparent: None,
+                        output_name: None,
+                    },
+                ],
+            },
+        }
+    }
+
+    pub(super) fn test_audio_config() -> WatchConfig {
+        WatchConfig {
+            name: "test_audio".to_string(),
+            subfolders: Vec::new(),
+            watch_folder: "/app/inputs/test_audio/".to_string(),
+            output_folder: "/app/outputs/test_audio/".to_string(),
+            watch_type: WatchType::Audio {
+                rules: vec![AudioRule {
+                    preset: "ffmpeg".to_string(),
+                    subfolder: None,
+                    input_extensions: vec![".wav".into(), ".flac".into()],
+                    output_ext: Some(".mp3".to_string()),
+                    audio_codec: None,
+                    audio_bitrate: None,
+                    sample_rate: None,
+                    channels: None,
+                    output_name: None,
+                }],
+            },
+        }
+    }
+
+    pub(super) fn test_pdf_config() -> WatchConfig {
+        WatchConfig {
+            name: "test_pdf".to_string(),
+            subfolders: Vec::new(),
+            watch_folder: "/app/inputs/test_pdf/".to_string(),
+            output_folder: "/app/outputs/test_pdf/".to_string(),
+            watch_type: WatchType::Pdf {
+                rules: vec![PdfRule {
+                    preset: "gs".to_string(),
+                    subfolder: None,
+                    input_extensions: vec![".pdf".into()],
+                    output_ext: None,
+                    mode: None,
+                    quality: None,
+                    pdfa_version: None,
+                    resolution: None,
+                    password: None,
+                    output_name: None,
+                }],
+            },
+        }
+    }
+
+    pub(super) fn test_document_config() -> WatchConfig {
+        WatchConfig {
+            name: "test_document".to_string(),
+            subfolders: Vec::new(),
+            watch_folder: "/app/inputs/test_document/".to_string(),
+            output_folder: "/app/outputs/test_document/".to_string(),
+            watch_type: WatchType::Document {
+                rules: vec![DocumentRule {
+                    preset: "libreoffice".to_string(),
+                    subfolder: None,
+                    input_extensions: vec![".docx".into(), ".pptx".into()],
+                    output_ext: None,
+                    toc: None,
+                    toc_depth: None,
+                    css: None,
+                    template: None,
+                    standalone: None,
+                    metadata: None,
+                    pdf_engine: None,
+                    options: None,
+                    output_name: None,
+                }],
+            },
+        }
+    }
+
+    pub(super) fn test_custom_config() -> WatchConfig {
+        WatchConfig {
+            name: "test_custom".to_string(),
+            subfolders: Vec::new(),
+            watch_folder: "/app/inputs/test_custom/".to_string(),
+            output_folder: "/app/outputs/test_custom/".to_string(),
+            watch_type: WatchType::Custom {
+                rules: vec![CustomRule {
+                    preset: "custom_script".to_string(),
+                    subfolder: None,
+                    input_extensions: vec![".xyz".into()],
+                    output_ext: None,
+                    command: Some("custom_converter".to_string()),
+                    output_name: None,
+                    description: None,
+                }],
             },
         }
     }
@@ -784,6 +918,314 @@ mod tests {
             crate::config::global::InputFileAction::Mark,
         );
         assert!(job.is_none(), "should NOT match .txt in ->gpu subfolder");
+    }
+
+    // ========== Image type tests ==========
+    #[test]
+    fn test_image_matches_by_extension() {
+        let config = test_image_config();
+        let file_path = PathBuf::from("/app/inputs/test_image/photo.png");
+        let job = create_job(
+            &file_path,
+            "photo.png",
+            &config,
+            "watcher_test",
+            crate::config::global::InputFileAction::Mark,
+        );
+        assert!(job.is_some(), "Image rule should match .png extension");
+    }
+
+    #[test]
+    fn test_image_matches_by_subfolder() {
+        let config = test_image_config();
+        let file_path = PathBuf::from("/app/inputs/test_image/->thumb/screenshot.png");
+        let job = create_job(
+            &file_path,
+            "screenshot.png",
+            &config,
+            "watcher_test",
+            crate::config::global::InputFileAction::Mark,
+        );
+        assert!(job.is_some(), "Image rule should match ->thumb subfolder");
+    }
+
+    #[test]
+    fn test_image_case_insensitive_extension() {
+        let config = test_image_config();
+        let file_path = PathBuf::from("/app/inputs/test_image/photo.PNG");
+        let job = create_job(
+            &file_path,
+            "photo.PNG",
+            &config,
+            "watcher_test",
+            crate::config::global::InputFileAction::Mark,
+        );
+        assert!(
+            job.is_some(),
+            "Image rule should match .PNG extension case-insensitively"
+        );
+    }
+
+    // ========== Audio type tests ==========
+    #[test]
+    fn test_audio_matches_by_extension() {
+        let config = test_audio_config();
+        let file_path = PathBuf::from("/app/inputs/test_audio/recording.wav");
+        let job = create_job(
+            &file_path,
+            "recording.wav",
+            &config,
+            "watcher_test",
+            crate::config::global::InputFileAction::Mark,
+        );
+        assert!(job.is_some(), "Audio rule should match .wav extension");
+    }
+
+    #[test]
+    fn test_audio_matches_by_subfolder() {
+        let config = WatchConfig {
+            name: "test_audio_sub".to_string(),
+            subfolders: Vec::new(),
+            watch_folder: "/app/inputs/test_audio_sub/".to_string(),
+            output_folder: "/app/outputs/test_audio_sub/".to_string(),
+            watch_type: WatchType::Audio {
+                rules: vec![AudioRule {
+                    preset: "ffmpeg".to_string(),
+                    subfolder: Some("compressed".to_string()),
+                    input_extensions: vec![".flac".into()],
+                    output_ext: Some(".mp3".to_string()),
+                    audio_codec: None,
+                    audio_bitrate: None,
+                    sample_rate: None,
+                    channels: None,
+                    output_name: None,
+                }],
+            },
+        };
+        let file_path = PathBuf::from("/app/inputs/test_audio_sub/->compressed/track.flac");
+        let job = create_job(
+            &file_path,
+            "track.flac",
+            &config,
+            "watcher_test",
+            crate::config::global::InputFileAction::Mark,
+        );
+        assert!(
+            job.is_some(),
+            "Audio rule should match ->compressed subfolder"
+        );
+    }
+
+    // ========== Pdf type tests ==========
+    #[test]
+    fn test_pdf_matches_by_extension() {
+        let config = test_pdf_config();
+        let file_path = PathBuf::from("/app/inputs/test_pdf/document.pdf");
+        let job = create_job(
+            &file_path,
+            "document.pdf",
+            &config,
+            "watcher_test",
+            crate::config::global::InputFileAction::Mark,
+        );
+        assert!(job.is_some(), "Pdf rule should match .pdf extension");
+    }
+
+    #[test]
+    fn test_pdf_matches_by_subfolder() {
+        let config = WatchConfig {
+            name: "test_pdf_sub".to_string(),
+            subfolders: Vec::new(),
+            watch_folder: "/app/inputs/test_pdf_sub/".to_string(),
+            output_folder: "/app/outputs/test_pdf_sub/".to_string(),
+            watch_type: WatchType::Pdf {
+                rules: vec![PdfRule {
+                    preset: "gs".to_string(),
+                    subfolder: Some("optimized".to_string()),
+                    input_extensions: vec![".pdf".into()],
+                    output_ext: None,
+                    mode: Some(crate::config::watch::PdfMode::Compress),
+                    quality: None,
+                    pdfa_version: None,
+                    resolution: None,
+                    password: None,
+                    output_name: None,
+                }],
+            },
+        };
+        let file_path = PathBuf::from("/app/inputs/test_pdf_sub/->optimized/report.pdf");
+        let job = create_job(
+            &file_path,
+            "report.pdf",
+            &config,
+            "watcher_test",
+            crate::config::global::InputFileAction::Mark,
+        );
+        assert!(job.is_some(), "Pdf rule should match ->optimized subfolder");
+    }
+
+    // ========== Document type tests ==========
+    #[test]
+    fn test_document_matches_by_extension() {
+        let config = test_document_config();
+        let file_path = PathBuf::from("/app/inputs/test_document/report.docx");
+        let job = create_job(
+            &file_path,
+            "report.docx",
+            &config,
+            "watcher_test",
+            crate::config::global::InputFileAction::Mark,
+        );
+        assert!(job.is_some(), "Document rule should match .docx extension");
+    }
+
+    #[test]
+    fn test_document_matches_by_subfolder() {
+        let config = WatchConfig {
+            name: "test_document_sub".to_string(),
+            subfolders: Vec::new(),
+            watch_folder: "/app/inputs/test_document_sub/".to_string(),
+            output_folder: "/app/outputs/test_document_sub/".to_string(),
+            watch_type: WatchType::Document {
+                rules: vec![DocumentRule {
+                    preset: "libreoffice".to_string(),
+                    subfolder: Some("export".to_string()),
+                    input_extensions: vec![".pptx".into()],
+                    output_ext: None,
+                    toc: None,
+                    toc_depth: None,
+                    css: None,
+                    template: None,
+                    standalone: None,
+                    metadata: None,
+                    pdf_engine: None,
+                    options: None,
+                    output_name: None,
+                }],
+            },
+        };
+        let file_path = PathBuf::from("/app/inputs/test_document_sub/->export/slides.pptx");
+        let job = create_job(
+            &file_path,
+            "slides.pptx",
+            &config,
+            "watcher_test",
+            crate::config::global::InputFileAction::Mark,
+        );
+        assert!(
+            job.is_some(),
+            "Document rule should match ->export subfolder"
+        );
+    }
+
+    // ========== Custom type tests ==========
+    #[test]
+    fn test_custom_matches_by_extension() {
+        let config = test_custom_config();
+        let file_path = PathBuf::from("/app/inputs/test_custom/data.xyz");
+        let job = create_job(
+            &file_path,
+            "data.xyz",
+            &config,
+            "watcher_test",
+            crate::config::global::InputFileAction::Mark,
+        );
+        assert!(job.is_some(), "Custom rule should match .xyz extension");
+    }
+
+    #[test]
+    fn test_custom_matches_by_subfolder() {
+        let config = WatchConfig {
+            name: "test_custom_sub".to_string(),
+            subfolders: Vec::new(),
+            watch_folder: "/app/inputs/test_custom_sub/".to_string(),
+            output_folder: "/app/outputs/test_custom_sub/".to_string(),
+            watch_type: WatchType::Custom {
+                rules: vec![CustomRule {
+                    preset: "custom_script".to_string(),
+                    subfolder: Some("special".to_string()),
+                    input_extensions: vec![".xyz".into()],
+                    output_ext: None,
+                    command: Some("special_converter".to_string()),
+                    output_name: None,
+                    description: None,
+                }],
+            },
+        };
+        let file_path = PathBuf::from("/app/inputs/test_custom_sub/->special/data.xyz");
+        let job = create_job(
+            &file_path,
+            "data.xyz",
+            &config,
+            "watcher_test",
+            crate::config::global::InputFileAction::Mark,
+        );
+        assert!(
+            job.is_some(),
+            "Custom rule should match ->special subfolder"
+        );
+    }
+
+    #[test]
+    fn test_find_matching_rule_returns_correct_variant() {
+        // Test that find_matching_rule returns the correct MatchedRule variant
+        let video_config = test_video_config();
+        let video_path = PathBuf::from("/app/inputs/test/clip.mp4");
+        let video_rule = find_matching_rule(&video_path, &video_config.watch_type);
+        assert!(matches!(video_rule, Some(MatchedRule::Video(_))));
+
+        let image_config = test_image_config();
+        let image_path = PathBuf::from("/app/inputs/test_image/photo.png");
+        let image_rule = find_matching_rule(&image_path, &image_config.watch_type);
+        assert!(matches!(image_rule, Some(MatchedRule::Image(_))));
+
+        let audio_config = test_audio_config();
+        let audio_path = PathBuf::from("/app/inputs/test_audio/recording.wav");
+        let audio_rule = find_matching_rule(&audio_path, &audio_config.watch_type);
+        assert!(matches!(audio_rule, Some(MatchedRule::Audio(_))));
+
+        let pdf_config = test_pdf_config();
+        let pdf_path = PathBuf::from("/app/inputs/test_pdf/document.pdf");
+        let pdf_rule = find_matching_rule(&pdf_path, &pdf_config.watch_type);
+        assert!(matches!(pdf_rule, Some(MatchedRule::Pdf(_))));
+
+        let document_config = test_document_config();
+        let document_path = PathBuf::from("/app/inputs/test_document/report.docx");
+        let document_rule = find_matching_rule(&document_path, &document_config.watch_type);
+        assert!(matches!(document_rule, Some(MatchedRule::Document(_))));
+
+        let custom_config = test_custom_config();
+        let custom_path = PathBuf::from("/app/inputs/test_custom/data.xyz");
+        let custom_rule = find_matching_rule(&custom_path, &custom_config.watch_type);
+        assert!(matches!(custom_rule, Some(MatchedRule::Custom(_))));
+    }
+
+    #[test]
+    fn test_rule_subfolder_names_extracts_correctly() {
+        // Test that rule_subfolder_names extracts subfolder names correctly
+        let video_config = test_video_config();
+        let video_subfolders = rule_subfolder_names(&video_config.watch_type);
+        assert!(video_subfolders.contains(&"gpu"));
+
+        let image_config = test_image_config();
+        let image_subfolders = rule_subfolder_names(&image_config.watch_type);
+        assert!(image_subfolders.contains(&"thumb"));
+
+        let audio_config = test_audio_config();
+        let audio_subfolders = rule_subfolder_names(&audio_config.watch_type);
+        assert!(audio_subfolders.is_empty());
+
+        let pdf_config = test_pdf_config();
+        let pdf_subfolders = rule_subfolder_names(&pdf_config.watch_type);
+        assert!(pdf_subfolders.is_empty());
+
+        let document_config = test_document_config();
+        let document_subfolders = rule_subfolder_names(&document_config.watch_type);
+        assert!(document_subfolders.is_empty());
+
+        let custom_config = test_custom_config();
+        let custom_subfolders = rule_subfolder_names(&custom_config.watch_type);
+        assert!(custom_subfolders.is_empty());
     }
 
     #[test]

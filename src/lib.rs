@@ -5,6 +5,7 @@
 
 pub mod cli;
 pub mod config;
+pub mod daemon;
 pub mod health;
 pub mod logs;
 pub mod processor;

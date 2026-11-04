@@ -1,4 +1,5 @@
 pub mod audio;
+pub mod context;
 pub mod disk;
 pub mod document;
 pub mod external;
@@ -9,25 +10,14 @@ pub mod pdf;
 pub mod runner;
 pub mod video;
 
-use std::sync::Arc;
-
-use crate::config::global::DiskSpaceConfig;
-use crate::health::server::HealthServer;
-use crate::logs::error_logger::ErrorLogger;
-use job::{ConversionJob, MatchedRule};
+use crate::processor::context::ProcessorDeps;
+use crate::processor::job::{ConversionJob, MatchedRule};
 
 /// Run a single conversion job locally using the appropriate processor.
 ///
 /// This is the per-job body used by the daemon. It does not manage the
 /// concurrency semaphore or the `processing_files` set — callers handle those.
-pub async fn process_one(
-    job: ConversionJob,
-    health_server: Arc<HealthServer>,
-    error_logger: Arc<ErrorLogger>,
-    disk_config: DiskSpaceConfig,
-    ffmpeg_path: String,
-    ffprobe_path: String,
-) {
+pub async fn process_one(deps: ProcessorDeps, job: ConversionJob) {
     let action = job.input_file_action.clone();
     match job.matched_rule {
         MatchedRule::Video(ref rule) => {
@@ -38,11 +28,9 @@ pub async fn process_one(
                 rule,
                 &job.output_folder,
                 &job.watch_folder,
-                error_logger,
-                health_server,
-                &disk_config,
-                &ffmpeg_path,
-                &ffprobe_path,
+                &deps,
+                &deps.ffmpeg_path,
+                &deps.ffprobe_path,
                 action,
             )
             .await;
@@ -55,10 +43,8 @@ pub async fn process_one(
                 rule,
                 &job.output_folder,
                 &job.watch_folder,
-                error_logger,
-                health_server,
-                &disk_config,
-                &ffmpeg_path,
+                &deps,
+                &deps.ffmpeg_path,
                 action,
             )
             .await;
@@ -71,10 +57,8 @@ pub async fn process_one(
                 rule,
                 &job.output_folder,
                 &job.watch_folder,
-                error_logger,
-                health_server,
-                &disk_config,
-                &ffmpeg_path,
+                &deps,
+                &deps.ffmpeg_path,
                 action,
             )
             .await;
@@ -87,9 +71,7 @@ pub async fn process_one(
                 rule,
                 &job.output_folder,
                 &job.watch_folder,
-                error_logger,
-                health_server,
-                &disk_config,
+                &deps,
                 action,
             )
             .await;
@@ -102,9 +84,7 @@ pub async fn process_one(
                 rule,
                 &job.output_folder,
                 &job.watch_folder,
-                error_logger,
-                health_server,
-                &disk_config,
+                &deps,
                 action,
             )
             .await;
@@ -117,9 +97,7 @@ pub async fn process_one(
                 rule,
                 &job.output_folder,
                 &job.watch_folder,
-                error_logger,
-                health_server,
-                &disk_config,
+                &deps,
                 action,
             )
             .await;

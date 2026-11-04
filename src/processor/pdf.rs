@@ -1,15 +1,12 @@
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::Arc;
 
 use anyhow::{bail, Result};
 use log::{error, warn};
 use tokio::process::Command;
 
-use crate::config::global::DiskSpaceConfig;
 use crate::config::watch::{PdfMode, PdfQuality, PdfRule};
-use crate::health::server::{ConversionRecord, HealthServer};
-use crate::logs::error_logger::ErrorLogger;
+use crate::health::server::ConversionRecord;
 use crate::utils::path::get_base_name;
 
 use super::disk::check_disk_space;
@@ -22,20 +19,19 @@ pub async fn process_pdf(
     rule: &PdfRule,
     output_folder: &str,
     watch_folder: &str,
-    error_logger: Arc<ErrorLogger>,
-    health_server: Arc<HealthServer>,
-    disk_config: &DiskSpaceConfig,
+    deps: &crate::processor::context::ProcessorDeps,
     input_file_action: crate::config::global::InputFileAction,
 ) {
-    if check_disk_space(output_folder, watch_folder, disk_config).await {
+    if check_disk_space(output_folder, watch_folder, &deps.disk_config).await {
         let msg = format!(
             "Disk space low — pausing conversion of {} until space is freed",
             file_name
         );
         warn!("{}", msg);
-        error_logger.log(&msg, &file_name, "pdf");
-        let _ = health_server.increment_error(&watcher_name);
-        let _ = health_server
+        deps.error_logger.log(&msg, &file_name, "pdf");
+        let _ = deps.health_server.increment_error(&watcher_name);
+        let _ = deps
+            .health_server
             .add_history(ConversionRecord {
                 time: chrono::Local::now().format("%H:%M:%S").to_string(),
                 watcher: watcher_name.clone(),
@@ -85,12 +81,11 @@ pub async fn process_pdf(
     let input_path = file_path.clone();
     let output_path_for_cleanup = output_path.clone();
     super::runner::run_conversion(
+        deps,
         watcher_name,
         file_name,
         file_path,
         &output_path_for_cleanup,
-        error_logger,
-        health_server,
         input_file_action,
         "pdf",
         || async move {
