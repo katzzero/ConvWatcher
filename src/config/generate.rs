@@ -78,7 +78,7 @@ pub(crate) fn generate_default_config(
     let outputs_base = abs.join("outputs");
     let logs_base = abs.join("logs");
 
-    let default_global = GlobalConfig {
+    let mut default_global = GlobalConfig {
         log: global::LogConfig {
             errors_file: logs_base.join("errors.log").to_string_lossy().to_string(),
             app_log_file: logs_base.join("app.log").to_string_lossy().to_string(),
@@ -92,6 +92,10 @@ pub(crate) fn generate_default_config(
         },
         ..Default::default()
     };
+
+    // Use the same secret in the in-memory config and the generated YAML.
+    let secret = generate_secret();
+    default_global.embedded_secret = secret.clone();
 
     let default_watchers = vec![WatchConfig {
         name: "default".to_string(),
@@ -381,7 +385,7 @@ watchers:
         inputs = inputs_str,
         outputs = outputs_str,
         logs = logs_str,
-        secret = generate_secret(),
+        secret = secret,
     );
 
     write_secure_file(config_path, &default_yaml)
@@ -423,7 +427,11 @@ mod tests {
         let (global, watchers, _registry) =
             generate_default_config(&config_path).expect("template generation must succeed");
         assert_eq!(watchers.len(), 1);
-        assert_eq!(global.log.errors_file, global.log.errors_file);
+        assert!(
+            !global.embedded_secret.is_empty(),
+            "first-run in-memory config must carry the generated secret"
+        );
+        assert_eq!(global.embedded_scan_interval_s, 10);
 
         // Round-trip: the YAML written by generate_default_config must parse.
         let content = std::fs::read_to_string(&config_path).unwrap();
@@ -443,6 +451,10 @@ mod tests {
             g.log.errors_file
         );
         assert_eq!(parsed.watchers.len(), 1);
+        assert_eq!(
+            g.embedded_secret, global.embedded_secret,
+            "generated YAML and in-memory config must use the same secret"
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
