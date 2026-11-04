@@ -1,6 +1,4 @@
 use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
-use std::time::Duration;
 
 use anyhow::Result;
 use log::{error, info, warn};
@@ -8,9 +6,6 @@ use log::{error, info, warn};
 use crate::config::global::InputFileAction;
 use crate::health::server::ConversionRecord;
 use crate::processor::context::ProcessorDeps;
-
-/// Default timeout for conversion jobs (3600 seconds = 1 hour).
-pub const DEFAULT_TIMEOUT_S: u64 = 3600;
 
 /// Shared success/error bookkeeping for every processor.
 ///
@@ -35,11 +30,11 @@ pub async fn run_conversion<F, Fut>(
     let _ = deps
         .health_server
         .set_processing(watcher_name.clone(), file_name.clone());
-    let _ = deps.health_server.dequeue(&file_name);
+    let _ = deps.health_server.dequeue(&watcher_name, &file_name);
     info!("[Processor] Processing started: {}", file_name);
 
-    let timeout_secs = deps.timeout_secs.load(Ordering::Relaxed);
-    let timeout = Duration::from_secs(timeout_secs);
+    let timeout_secs = deps.timeout_secs();
+    let timeout = deps.timeout();
     let result = match tokio::time::timeout(timeout, convert()).await {
         Ok(result) => result,
         Err(_) => {

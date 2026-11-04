@@ -17,12 +17,19 @@ fn convwatcher_bin() -> Option<std::path::PathBuf> {
     if p.exists() {
         return Some(p);
     }
+    if std::env::var("CI").is_ok() {
+        panic!("convwatcher binary is required in CI (build it before running tests)");
+    }
     None
 }
 
 fn ffmpeg_available() -> bool {
     let f = std::env::var("FFMPEG_PATH").unwrap_or_else(|_| "/opt/homebrew/bin/ffmpeg".to_string());
-    std::path::Path::new(&f).exists()
+    let ok = std::path::Path::new(&f).exists();
+    if !ok && std::env::var("CI").is_ok() {
+        panic!("ffmpeg is required in CI");
+    }
+    ok
 }
 
 fn ffmpeg_path() -> String {
@@ -139,16 +146,6 @@ video:
       preset: libx264
 "#,
     )
-}
-
-/// An invalid embedded override: type mismatch (image instead of video).
-fn invalid_type_override() -> &'static str {
-    r#"secret: ""
-video_typo:
-  rules:
-    - input_extensions: [.png]
-      preset: jpeg_80
-"#
 }
 
 fn poll<F: FnMut() -> bool>(mut f: F, timeout: Duration, tick: Duration) -> bool {
@@ -393,7 +390,8 @@ fn embedded_override_type_mismatch_rejected() {
     let logs_p = logs_dir.to_str().unwrap();
 
     let watcher_name = "type_watcher";
-    let config_yaml = build_config_with_secret("", watcher_name, watch, output, logs_p);
+    let secret = "typesecret42";
+    let config_yaml = build_config_with_secret(secret, watcher_name, watch, output, logs_p);
     let config_path = config_dir.join("config.yaml");
     std::fs::write(&config_path, &config_yaml).unwrap();
 
@@ -418,9 +416,13 @@ fn embedded_override_type_mismatch_rejected() {
     // Give the process time to start.
     std::thread::sleep(Duration::from_secs(2));
 
-    // Drop an override with type mismatch (wrong key in YAML = no video rule).
+    // Drop a valid image override for a video watcher: the rejection must be
+    // the type mismatch, not the empty-secret check.
     let override_path = watch_folder.join(format!("{watcher_name}.yaml"));
-    std::fs::write(&override_path, invalid_type_override()).expect("failed to write override file");
+    let override_yaml = format!(
+        "secret: \"{secret}\"\nimage:\n  rules:\n    - input_extensions: [.png]\n      preset: jpeg_80\n"
+    );
+    std::fs::write(&override_path, override_yaml).expect("failed to write override file");
 
     // Poll: nothing appears in config/watchs/ and .invalid marker exists.
     let promoted_file = config_dir

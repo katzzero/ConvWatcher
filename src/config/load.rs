@@ -10,7 +10,7 @@ use anyhow::{Context, Result};
 use log::warn;
 
 use super::codec_registry::{resolve_watchers, CodecRegistry};
-use super::generate::generate_default_config;
+use super::generate::{generate_default_config, set_secure_dir_mode};
 use super::global::GlobalConfig;
 use super::presets::generate_preset_files;
 use super::validate::validate_config;
@@ -139,12 +139,14 @@ pub(crate) fn create_directories(
     if let Some(parent) = Path::new(&global.log.errors_file).parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("Cannot create log directory {}", parent.display()))?;
+        let _ = set_secure_dir_mode(parent);
     }
 
     // Also ensure app_log_file's parent exists (might be same dir as errors_file)
     if let Some(parent) = Path::new(&global.log.app_log_file).parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("Cannot create log directory {}", parent.display()))?;
+        let _ = set_secure_dir_mode(parent);
     }
 
     // Create history file directory
@@ -169,6 +171,7 @@ pub(crate) fn create_directories(
             watchs_dir.display()
         )
     })?;
+    let _ = set_secure_dir_mode(&watchs_dir);
 
     Ok(())
 }

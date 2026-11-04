@@ -15,12 +15,19 @@ fn convwatcher_bin() -> Option<std::path::PathBuf> {
     if p.exists() {
         return Some(p);
     }
+    if std::env::var("CI").is_ok() {
+        panic!("convwatcher binary is required in CI (build it before running tests)");
+    }
     None
 }
 
 fn ffmpeg_available() -> bool {
     let f = std::env::var("FFMPEG_PATH").unwrap_or_else(|_| "/opt/homebrew/bin/ffmpeg".to_string());
-    std::path::Path::new(&f).exists()
+    let ok = std::path::Path::new(&f).exists();
+    if !ok && std::env::var("CI").is_ok() {
+        panic!("ffmpeg is required in CI");
+    }
+    ok
 }
 
 /// Generate the minimal preset files required by `load_config`.
@@ -163,7 +170,7 @@ watchers:
   output_folder: {}
   type: video
   rules:
-    - input_extensions: [.webm]
+    - input_extensions: [.mp4]
       preset: libx264
 "#,
         ffmpeg_path, logs, logs, logs, watch1, output1, watch2, output2
@@ -183,6 +190,29 @@ fn poll<F: FnMut() -> bool>(mut f: F, timeout: Duration, tick: Duration) -> bool
 
 fn child_alive(child: &mut std::process::Child) -> bool {
     matches!(child.try_wait(), Ok(None))
+}
+
+fn write_sample_video(path: &std::path::Path) {
+    let ffmpeg =
+        std::env::var("FFMPEG_PATH").unwrap_or_else(|_| "/opt/homebrew/bin/ffmpeg".to_string());
+    let status = std::process::Command::new(ffmpeg)
+        .args([
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=duration=1:size=64x64:rate=1",
+            "-y",
+            path.to_str().unwrap(),
+        ])
+        .status()
+        .expect("failed to run ffmpeg for sample video");
+    assert!(status.success(), "ffmpeg failed to create sample video");
+}
+
+fn has_output(dir: &std::path::Path) -> bool {
+    std::fs::read_dir(dir)
+        .map(|d| d.filter_map(|e| e.ok()).any(|e| e.path().is_file()))
+        .unwrap_or(false)
 }
 
 #[test]
@@ -279,9 +309,6 @@ fn config_hot_reload_creates_new_folders() {
     // Also verify the process is still alive after reload (didn't crash).
     let alive = child_alive(&mut child);
 
-    let _ = child.kill();
-    let _ = child.wait();
-
     assert!(
         reloaded,
         "Hot-reload should create new watcher folders. \
@@ -292,6 +319,24 @@ fn config_hot_reload_creates_new_folders() {
     assert!(
         alive,
         "Process should still be running after config hot-reload"
+    );
+
+    // Folder existence alone is not enough: load_config creates folders on its
+    // own during reload polling. Prove the new monitor actually converts.
+    let sample = tmp.join("sample_2.mp4");
+    write_sample_video(&sample);
+    std::fs::copy(&sample, new_watch_folder.join("sample_2.mp4")).unwrap();
+    let converted = poll(
+        || has_output(&new_output_folder),
+        Duration::from_secs(20),
+        Duration::from_millis(300),
+    );
+
+    let _ = child.kill();
+    let _ = child.wait();
+    assert!(
+        converted,
+        "new watcher must actually convert a file after hot-reload"
     );
 
     let _ = std::fs::remove_dir_all(&tmp);
@@ -443,14 +488,14 @@ watchers:
   output_folder: {}
   type: video
   rules:
-    - input_extensions: [.webm]
+    - input_extensions: [.mp4]
       preset: libx264
 - name: third_watcher
   watch_folder: {}
   output_folder: {}
   type: video
   rules:
-    - input_extensions: [.mkv]
+    - input_extensions: [.mp4]
       preset: libx264
 "#,
         ffmpeg_path, logs, logs, logs, watch1, output1, watch2, output2, watch3, output3
@@ -559,15 +604,27 @@ fn config_hot_reload_twice_creates_third_folder() {
         Duration::from_millis(300),
     );
     let alive = child_alive(&mut child);
-
-    let _ = child.kill();
-    let _ = child.wait();
-
     assert!(
         second_reload,
         "second hot-reload should create watcher 3 folders"
     );
     assert!(alive, "process must survive the second reload");
+
+    let sample3 = tmp.join("sample_3.mp4");
+    write_sample_video(&sample3);
+    std::fs::copy(&sample3, std::path::Path::new(&watch3).join("sample_3.mp4")).unwrap();
+    let converted = poll(
+        || has_output(std::path::Path::new(&output3)),
+        Duration::from_secs(20),
+        Duration::from_millis(300),
+    );
+
+    let _ = child.kill();
+    let _ = child.wait();
+    assert!(
+        converted,
+        "watcher 3 must actually convert a file after the second reload"
+    );
 
     let _ = std::fs::remove_dir_all(&tmp);
 }
@@ -717,7 +774,14 @@ fn reload_and_sigterm_concurrently_shuts_down() {
         ),
     )
     .unwrap();
-    std::thread::sleep(Duration::from_millis(200));
+    assert!(
+        poll(
+            || std::path::Path::new(&watch2).exists(),
+            Duration::from_secs(10),
+            Duration::from_millis(100)
+        ),
+        "reload should start before SIGTERM"
+    );
 
     let status = std::process::Command::new("kill")
         .args(["-TERM", &child.id().to_string()])

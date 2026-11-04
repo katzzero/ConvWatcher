@@ -22,12 +22,19 @@ fn convwatcher_bin() -> Option<std::path::PathBuf> {
     if p.exists() {
         return Some(p);
     }
+    if std::env::var("CI").is_ok() {
+        panic!("convwatcher binary is required in CI (build it before running tests)");
+    }
     None
 }
 
 fn ffmpeg_available() -> bool {
     let f = std::env::var("FFMPEG_PATH").unwrap_or_else(|_| "/opt/homebrew/bin/ffmpeg".to_string());
-    std::path::Path::new(&f).exists()
+    let ok = std::path::Path::new(&f).exists();
+    if !ok && std::env::var("CI").is_ok() {
+        panic!("ffmpeg is required in CI");
+    }
+    ok
 }
 
 fn ffmpeg_path() -> String {

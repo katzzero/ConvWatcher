@@ -44,8 +44,9 @@ pub fn validate_config(global: &GlobalConfig, watchers: &[WatchConfig]) -> Resul
         validate_absolute_path(fp, "global.ffprobe_path")?;
     }
 
-    // Track watcher names for duplicate detection
+    // Track watcher names/watch folders for duplicate detection
     let mut seen_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut seen_folders: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     // Validate watcher paths and names
     for watcher in watchers {
@@ -71,6 +72,13 @@ pub fn validate_config(global: &GlobalConfig, watchers: &[WatchConfig]) -> Resul
             anyhow::bail!("Duplicate watcher name: '{}'", watcher.name);
         }
         seen_names.insert(watcher.name.clone());
+
+        if !seen_folders.insert(watcher.watch_folder.clone()) {
+            anyhow::bail!(
+                "Duplicate watch_folder '{}' (watchers must not share a folder)",
+                watcher.watch_folder
+            );
+        }
 
         if watcher.watch_folder.is_empty() {
             anyhow::bail!(

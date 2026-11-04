@@ -107,10 +107,51 @@ pub async fn monitor_manager(
                 let Some(new_configs) = maybe else { break };
 
                 // Pick up global.* changes applied by the reload task.
+                let previous_global = current_global.clone();
                 current_global = shared_global
                     .read()
                     .unwrap_or_else(|p| p.into_inner())
                     .clone();
+
+                // These fields are captured by long-lived tasks at startup.
+                // Warn instead of silently accepting an ineffective reload.
+                if previous_global.max_concurrent_conversions
+                    != current_global.max_concurrent_conversions
+                {
+                    warn!("hot-reload: max_concurrent changed; restart required to resize the semaphore");
+                }
+                if previous_global.embedded_secret != current_global.embedded_secret {
+                    warn!("hot-reload: embedded_secret changed; restart required for the embedded scanner");
+                }
+                if previous_global.embedded_scan_interval_s
+                    != current_global.embedded_scan_interval_s
+                {
+                    warn!("hot-reload: embedded_scan_interval changed; restart required for the embedded scanner");
+                }
+                if previous_global.ffmpeg_path != current_global.ffmpeg_path
+                    || previous_global.ffprobe_path != current_global.ffprobe_path
+                {
+                    warn!("hot-reload: ffmpeg/ffprobe path changed; restart required for processors");
+                }
+                if previous_global.disk_space.check_interval_s
+                    != current_global.disk_space.check_interval_s
+                    || previous_global.disk_space.check_output
+                        != current_global.disk_space.check_output
+                    || previous_global.disk_space.check_watch
+                        != current_global.disk_space.check_watch
+                {
+                    warn!("hot-reload: disk_space settings changed; restart required for the disk monitor");
+                }
+                if previous_global.healthcheck.http_port
+                    != current_global.healthcheck.http_port
+                    || previous_global.healthcheck.bind_address
+                        != current_global.healthcheck.bind_address
+                    || previous_global.healthcheck.auth_token
+                        != current_global.healthcheck.auth_token
+                {
+                    warn!("hot-reload: healthcheck settings changed; restart required for the health server");
+                }
+
                 let val = if current_global.timeout_s == 0 {
                     DEFAULT_TIMEOUT_S
                 } else {

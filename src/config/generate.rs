@@ -53,7 +53,7 @@ pub(crate) fn write_secure_file(path: &Path, content: &str) -> Result<()> {
 }
 
 #[cfg(unix)]
-fn set_secure_dir_mode(path: &Path) -> Result<()> {
+pub(crate) fn set_secure_dir_mode(path: &Path) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
     let perms = std::fs::Permissions::from_mode(SECURE_DIR_MODE);
     std::fs::set_permissions(path, perms)

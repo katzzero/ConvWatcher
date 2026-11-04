@@ -254,11 +254,3 @@ pub async fn run_embedded_scanner(
         }
     }
 }
-
-/// Get the watchs directory path from the config path.
-/// If config_path is provided, derives the watchs directory from it.
-/// Otherwise, uses the default config directory.
-pub fn get_watchs_dir_from_config(config_path: Option<&Path>) -> PathBuf {
-    let config_dir = crate::config::config_dir_for(config_path);
-    config_dir.join("watchs")
-}

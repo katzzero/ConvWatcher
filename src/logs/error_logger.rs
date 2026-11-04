@@ -122,7 +122,6 @@ pub fn redact(text: &str, secrets: &[String]) -> String {
         "apikey=",
         "credential=",
         "auth=",
-        "etc",
     ];
     for pattern in &sensitive_patterns {
         result = redact_pattern(&result, pattern);
@@ -221,14 +220,5 @@ mod tests {
         assert!(!redacted.contains("verylongsecretvalue123"));
         // Verify no partial masking with asterisks
         assert!(!redacted.contains("***************"));
-    }
-
-    #[test]
-    fn test_redact_etc_path() {
-        // Test that /etc/ paths are redacted
-        let text = "Reading file from /etc/passwd for processing";
-        let redacted = redact(text, &[]);
-        assert!(redacted.contains("***REDACTED***"));
-        assert!(!redacted.contains("/etc/passwd"));
     }
 }

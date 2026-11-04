@@ -5,7 +5,6 @@ use std::time::Duration;
 use crate::config::global::DiskSpaceConfig;
 use crate::health::server::HealthServer;
 use crate::logs::error_logger::ErrorLogger;
-use crate::processor::job::ConversionJob;
 
 /// Default timeout for conversion jobs (3600 seconds = 1 hour).
 pub const DEFAULT_TIMEOUT_S: u64 = 3600;
@@ -23,12 +22,6 @@ pub struct ProcessorDeps {
     pub ffmpeg_path: String,
     pub ffprobe_path: String,
     pub timeout_secs: Arc<AtomicU64>,
-}
-
-/// Per-job context: the job plus a handle to the shared dependencies.
-pub struct JobContext {
-    pub job: ConversionJob,
-    pub deps: Arc<ProcessorDeps>,
 }
 
 impl ProcessorDeps {

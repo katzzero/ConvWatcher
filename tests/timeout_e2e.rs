@@ -12,7 +12,11 @@ fn convwatcher_bin() -> Option<std::path::PathBuf> {
 
 fn ffmpeg_path() -> Option<String> {
     let f = std::env::var("FFMPEG_PATH").unwrap_or_else(|_| "/opt/homebrew/bin/ffmpeg".to_string());
-    std::path::Path::new(&f).exists().then_some(f)
+    let ok = std::path::Path::new(&f).exists();
+    if !ok && std::env::var("CI").is_ok() {
+        panic!("ffmpeg is required in CI");
+    }
+    ok.then_some(f)
 }
 
 fn write_presets(config_dir: &std::path::Path) {

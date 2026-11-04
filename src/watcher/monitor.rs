@@ -144,8 +144,8 @@ pub async fn run_file_monitor(
 
     let watch_dir = watch_path.clone();
     let event_tx_clone = event_tx.clone();
-    let mut watcher: RecommendedWatcher =
-        match notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
+    let mut watcher: Option<RecommendedWatcher> =
+        notify::recommended_watcher(move |res: Result<Event, notify::Error>| {
             if let Ok(event) = res {
                 match event.kind {
                     EventKind::Create(_) | EventKind::Modify(_) => {
@@ -160,18 +160,22 @@ pub async fn run_file_monitor(
             }
         })
         .map_err(|e| error!("Failed to create watcher: {}", e))
-        .ok()
-        {
-            Some(w) => w,
-            None => return,
-        };
+        .ok();
 
-    if let Err(e) = // Non-recursive: subfolder files are picked up by the periodic
+    if let Some(ref mut w) = watcher {
+        // Non-recursive: subfolder files are picked up by the periodic
         // `collect_scan_files` pass, which also avoids symlink loops.
-        watcher.watch(&watch_dir, RecursiveMode::NonRecursive)
-    {
-        error!("Failed to watch {}: {}", watch_folder, e);
-        return;
+        if let Err(e) = w.watch(&watch_dir, RecursiveMode::NonRecursive) {
+            error!(
+                "Failed to watch {} with notify ({}); relying on periodic scan",
+                watch_folder, e
+            );
+        }
+    } else {
+        error!(
+            "Notify unavailable for {}; relying on periodic scan",
+            watch_folder
+        );
     }
 
     let mut scan_ticker = tokio::time::interval(check_interval);
@@ -339,7 +343,7 @@ async fn scan_directory(
                                     processed_files
                                         .insert(path.clone(), (current_size, current_mtime));
                                 }
-                                let _ = health_server.enqueue(&file_name);
+                                let _ = health_server.enqueue(watcher_name, &file_name);
                             }
                             Ok(Err(_)) => {
                                 error!("Failed to send job to job queue");
@@ -530,7 +534,8 @@ fn validate_and_promote_config(
     let old_path = config_path.with_extension("yaml.old");
     let _ = std::fs::rename(config_path, &old_path);
 
-    let invalid_path = config_path.with_extension("yaml.invalid");
+    let watch_dir = config_path.parent().unwrap_or(Path::new("."));
+    let invalid_path = watch_dir.join(format!("{}.invalid", manifest.name));
     let _ = std::fs::remove_file(&invalid_path);
 
     info!(
