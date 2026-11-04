@@ -17,6 +17,9 @@ jobs:
   audit:
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      checks: write
     # cargo-audit's current release needs a newer rustc than the 1.95 pinned
     # for the build; use stable only for the audit tooling.
     env:
