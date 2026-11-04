@@ -246,7 +246,19 @@ async fn scan_directory(
         if path == config_yaml_path {
             let invalid_path = watch_dir.join(format!("{}.invalid", config.name));
             if invalid_path.exists() {
-                continue;
+                // Allow a corrected override to be retried: if the YAML changed
+                // after the marker was written, drop the latch and re-validate.
+                let config_mtime = path.metadata().and_then(|m| m.modified()).ok();
+                let marker_mtime = invalid_path.metadata().and_then(|m| m.modified()).ok();
+                let corrected = matches!(
+                    (config_mtime, marker_mtime),
+                    (Some(config), Some(marker)) if config > marker
+                );
+                if corrected {
+                    let _ = std::fs::remove_file(&invalid_path);
+                } else {
+                    continue;
+                }
             }
 
             let metadata = match path.metadata() {

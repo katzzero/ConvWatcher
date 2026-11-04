@@ -543,3 +543,93 @@ fn embedded_override_invalid_output_folder_rejected() {
 
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+/// A corrected override must be retried after a transient rejection: the
+/// `.invalid` marker is a latch, so a newer YAML should clear it automatically.
+#[test]
+fn embedded_override_retries_after_correction() {
+    let bin = match convwatcher_bin() {
+        Some(p) => p,
+        None => {
+            eprintln!("convwatcher binary not found — skipping override retry test");
+            return;
+        }
+    };
+    if !ffmpeg_available() {
+        eprintln!("ffmpeg unavailable — skipping override retry test");
+        return;
+    }
+
+    let tmp = std::env::temp_dir().join(format!("cw-override-retry-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    let config_dir = tmp.join("config");
+    let watch_folder = tmp.join("watch_retry");
+    let output_folder = tmp.join("output_retry");
+    let logs_dir = tmp.join("logs");
+    for d in [&config_dir, &watch_folder, &output_folder, &logs_dir] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    write_presets(&config_dir);
+
+    let secret = "retrysecret42";
+    let watcher_name = "retry_watcher";
+    let config_yaml = build_config_with_secret(
+        secret,
+        watcher_name,
+        watch_folder.to_str().unwrap(),
+        output_folder.to_str().unwrap(),
+        logs_dir.to_str().unwrap(),
+    );
+    let config_path = config_dir.join("config.yaml");
+    std::fs::write(&config_path, config_yaml).unwrap();
+
+    let mut child = std::process::Command::new(&bin)
+        .args([
+            "--config",
+            config_path.to_str().unwrap(),
+            "--no-daemon",
+            "--level",
+            "warn",
+        ])
+        .current_dir(&tmp)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to spawn convwatcher");
+
+    std::thread::sleep(Duration::from_secs(2));
+
+    let override_path = watch_folder.join(format!("{watcher_name}.yaml"));
+    let invalid_marker = watch_folder.join(format!("{watcher_name}.invalid"));
+    let promoted = config_dir
+        .join("watchs")
+        .join(format!("{watcher_name}.yaml"));
+
+    // 1) Reject with a wrong secret.
+    std::fs::write(&override_path, valid_video_override("wrong-secret")).unwrap();
+    assert!(
+        poll(
+            || invalid_marker.exists(),
+            Duration::from_secs(10),
+            Duration::from_millis(200)
+        ),
+        "invalid override must create the marker"
+    );
+
+    // 2) Correct the same file after the marker was written.
+    std::thread::sleep(Duration::from_millis(1200));
+    std::fs::write(&override_path, valid_video_override(secret)).unwrap();
+    let promoted_ok = poll(
+        || promoted.exists(),
+        Duration::from_secs(15),
+        Duration::from_millis(300),
+    );
+
+    let _ = child.kill();
+    let _ = child.wait();
+    assert!(
+        promoted_ok,
+        "corrected override should clear the latch and be promoted"
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
+}
