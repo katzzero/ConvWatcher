@@ -31,18 +31,19 @@ config/
 ├── document_presets.yaml    # Document conversion presets
 └── watchs/                  # Per-watcher overrides (promoted automatically)
 
-./inputs/                    # Watch folders
-├── videos/
+./inputs/                    # Watch folders (one watcher per type)
+├── default/                 # video
 │   ├── ->gpu/               # Subfolder mode: drop files here for GPU encoding
 │   └── ->archive/           # Subfolder mode: drop files here for archival
-├── images/
-├── audio/
-└── ...
+├── image/                   # image conversions
+├── audio/                   # audio conversions
+└── pdf/                     # PDF conversions
 
-./outputs/                   # Output folders
-├── videos-output/
-├── images-output/
-└── ...
+./outputs/                   # Matching output folders
+├── default/
+├── image/
+├── audio/
+└── pdf/
 ```
 
 **Key rule:** Each watcher is **single-type** — video, image, audio, pdf, document, or custom.
@@ -133,9 +134,11 @@ All settings live in one file: global daemon settings + watcher definitions.
 global:
   file_check_interval: 2s       # Scan interval
   stable_time: 5s               # File stability wait
-  ffmpeg_path: /usr/bin/ffmpeg
+  ffmpeg_path: /usr/bin/ffmpeg # validated at startup
   max_concurrent: 4             # Worker pool size
   refresh_interval: 5m          # Hot-reload interval
+  timeout: 3600s                # Per-conversion timeout
+  input_file_action: mark       # mark | delete | none
 
   codec_presets:                # Preset files (relative to config/)
     video: video_codecs.yaml
@@ -146,10 +149,12 @@ global:
 
   log:
     errors_file: /app/logs/errors.log
+    app_log_file: /app/logs/app.log
 
   healthcheck:
     http_port: 8080
-    bind_address: 0.0.0.0
+    bind_address: 127.0.0.1
+    auth_password: ""           # empty = dashboard without password
 
   disk_space:
     check_interval: 60s
@@ -204,18 +209,24 @@ watchers:
 |-------|------|-------------|---------|-----------|
 | `file_check_interval` | string (duração) | não | `2s` | Intervalo de varredura das pastas |
 | `stable_time` | string (duração) | não | `5s` | Tempo de estabilidade após upload |
-| `ffmpeg_path` | string (path) | não | `/usr/bin/ffmpeg` | Caminho do FFmpeg |
-| `ffprobe_path` | string (path) | não | — | Caminho do FFprobe (auto-detecta se omitido) |
+| `ffmpeg_path` | string (path) | não | auto-detectado | Caminho do FFmpeg; validado no startup (Homebrew/usr/local/usr/bin) |
+| `ffprobe_path` | string (path) | não | — | Caminho do FFprobe (auto-detecta o irmão do ffmpeg) |
 | `max_concurrent_conversions` | integer | não | `4` | Máx. conversões simultâneas |
 | `config_refresh_interval_s` | string (duração) | não | `5m` | Intervalo de hot-reload |
-| `embedded_secret` | string | não | `""` | Secret para validação de overrides |
-| `embedded_scan_interval_s` | integer | não | `0` | Intervalo de scan de overrides |
+| `embedded_secret` | string | não | gerado no primeiro run | Secret para validação de overrides vindos da watch folder |
+| `embedded_scan_interval_s` | integer | não | `10` | Intervalo de scan de overrides (0 desliga) |
 | `codec_presets.*` | string (path) | não | `video_codecs.yaml` etc | Arquivos de presets |
 | `log.errors_file` | string (path) | não | `<CWD>/logs/errors.log` | Path do log de erros |
+| `log.app_log_file` | string (path) | não | `<CWD>/logs/app.log` | Path do log da aplicação |
 | `log.max_log_files` | integer | não | `30` | Máx. arquivos de log rotacionados |
 | `log.max_log_size_mb` | integer | não | `100` | Tamanho máx. por arquivo de log (MB) |
+| `log.max_error_log_size_mb` | integer | não | `50` | Tamanho máx. do log de erros (MB) |
+| `log.redact_secrets` | boolean | não | `true` | Redige segredos/passwords nos logs |
 | `healthcheck.http_port` | integer | não | `8080` | Porta do dashboard |
-| `healthcheck.bind_address` | string | não | `0.0.0.0` | Endereço de bind |
+| `healthcheck.bind_address` | string | não | `127.0.0.1` | Endereço de bind (use `0.0.0.0` só com auth/rede confiável) |
+| `healthcheck.auth_password` | string | não | `""` | Senha do dashboard; vazia desliga a auth. `auth_token` ainda é aceito como alias |
+| `timeout` | string/int | não | `3600s` | Timeout por conversão |
+| `input_file_action` | enum | não | `mark` | Pós-processamento do input: `mark`, `delete`, `none` |
 | `disk_space.check_interval` | string (duração) | não | `60s` | Intervalo de verificação de disco |
 | `disk_space.threshold` | string/int | não | `500` | Limiar de espaço livre (MB, Gb, %) |
 | `disk_space.check_output` | boolean | não | `false` | Verificar disco da pasta de saída |
@@ -424,22 +435,28 @@ http://localhost:8080/dashboard
 ```
 
 - Real-time stats: processed, errors, queue, processing
-- Watcher cards with type + rules summary
+- Live progress per active conversion (percent, speed, ETA)
+- Watcher cards with name, type and rule summary
 - Conversion history (last 500 records)
-- Auto-refresh every 5 seconds
+- Logs: app log, error log and live FFmpeg output
+- Auto-refresh: 1s / 2s / 5s / 10s / 30s / Off
 - Dark/light mode
 
 ### API Endpoints
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/health` | JSON health status |
-| GET | `/dashboard` | HTML dashboard |
+| GET | `/health` | JSON health status + version (público) |
+| GET | `/dashboard` | HTML dashboard (público; APIs pedem senha) |
 | GET | `/api/watchers` | JSON watcher list |
-| GET | `/api/queue` | JSON queue status |
+| GET | `/api/queue` | JSON queue, processing and progress |
 | GET | `/api/history` | JSON history |
-| GET | `/logs` | Latest 100 log lines |
+| GET | `/api/ffmpeg` | Live FFmpeg stdout/stderr for active jobs |
+| GET | `/logs` | Latest 100 app log lines |
 | GET | `/logs/errors` | Latest error log lines |
+| GET | `/logs/app` | Latest app log lines (alias) |
+
+All `/api/*` and `/logs*` endpoints require `Authorization: Bearer <password>` when `healthcheck.auth_password` is set; `/health` and `/dashboard` stay public.
 
 ### Dashboard auth / UX
 
@@ -466,12 +483,14 @@ http://localhost:8080/dashboard
 - **Auto-promotion** — drop a config file in the watch folder, it gets validated and promoted
 - **Type safety** — overrides locked to watcher type
 - **Hot Config Reload** — rescans configs periodically, dynamically restarts monitors
+- **Live Progress** — percent, speed and ETA for video/audio conversions
+- **FFmpeg Output** — live stdout/stderr per active job in the dashboard
 - **File Stability Detection** — waits for files to finish uploading
 - **Worker Pool** — semaphore-based concurrency limiting
 - **Disk Space Monitor** — halts on low disk, auto-resumes
 - **Hardware Acceleration** — detects VAAPI/NVENC/QSV/AMF/VideoToolbox/RKMPP and Raspberry Pi V4L2 mem2mem
 - **Graceful Shutdown** — clean broadcast-channel shutdown
-- **Daemon Mode** — background execution with log-file output
+- **Daemon flags** — `--daemon` redirects logs to a file (does not fork/detach)
 - **Multi-arch Docker** — AMD64 (VAAPI + NVENC) + ARM64 (Rockchip MPP + Raspberry Pi V4L2)
 
 ---
@@ -528,11 +547,12 @@ cross build --release --target aarch64-unknown-linux-musl
 ## Security / Hardenings
 
 - **Docker non-root**: the image runs as user `cw` (created with `useradd -r -s /bin/false --no-create-home`), no home directory, and the entrypoint runs under that user.
-- **Health server bind/auth**: the HTTP health/dashboard server binds to `127.0.0.1` by default. Optional auth is available via `global.healthcheck.auth_password` (`Authorization: Bearer <senha>`); `/health` stays open for container healthchecks. If you bind `0.0.0.0`, set a password or keep the port firewalled.
+- **Health server bind/auth**: the HTTP health/dashboard server binds to `127.0.0.1` by default. Optional password auth is available via `global.healthcheck.auth_password` (`Authorization: Bearer <senha>`); `/health` and the static dashboard stay open, while APIs/logs require the password. If you bind `0.0.0.0`, set a password or keep the port firewalled.
 - **embedded_secret**: required for per-watcher overrides promoted from a watch folder; when empty, those overrides are rejected (`.invalid` marker). Manual admin overrides placed in `config/watchs/` are still honored.
 - **`config/watchs/` is admin-only**: override files are validated (secret via constant-time compare, type matching) before promotion. Treat the directory as admin-controlled.
 - **ImageMagick removed**: ImageMagick is no longer in the conversion allowlist (removed from the Docker toolchain and processors). Do not re-add it.
 - **File permissions**: sensitive runtime files (logs, history, override configs) are created with `600` permissions; directories use `700`.
+- **Startup validation**: `ffmpeg` must exist and be executable; `ffprobe` missing only warns (duration/progress checks are skipped). Missing ffmpeg aborts startup with a clear message.
 
 ---
 
