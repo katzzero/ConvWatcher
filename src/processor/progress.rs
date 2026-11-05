@@ -57,7 +57,7 @@ pub struct ProgressReporter {
     pub health_server: Arc<HealthServer>,
     pub watcher: String,
     pub file: String,
-    state: Arc<tokio::sync::Mutex<ProgressState>>,
+    state: Arc<std::sync::Mutex<ProgressState>>,
 }
 
 impl ProgressReporter {
@@ -66,138 +66,105 @@ impl ProgressReporter {
             health_server,
             watcher,
             file,
-            state: Arc::new(tokio::sync::Mutex::new(ProgressState::default())),
+            state: Arc::new(std::sync::Mutex::new(ProgressState::default())),
         }
     }
 
+    fn lock_state(&self) -> std::sync::MutexGuard<'_, ProgressState> {
+        self.state.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
     /// Define a duração total do input (segundos), obtida via ffprobe.
+    /// Síncrono de propósito: o ffmpeg só começa depois desta chamada.
     pub fn set_duration(&self, duration_s: f64) {
-        // Não bloqueia: seta de forma assíncrona (fire-and-forget) pois é
-        // chamado uma vez no início da conversão.
-        let hs = self.health_server.clone();
-        let watcher = self.watcher.clone();
-        let file = self.file.clone();
-        let state = self.state.clone();
-        tokio::spawn(async move {
-            let mut s = state.lock().await;
-            s.duration_s = Some(duration_s);
-            let _ = hs.set_progress(
-                &watcher,
-                &file,
-                ProgressInfo {
-                    percent: None,
-                    out_time: None,
-                    speed: None,
-                    eta: None,
-                },
-            );
-        });
+        let mut s = self.lock_state();
+        s.duration_s = Some(duration_s);
+        let _ = self.health_server.set_progress(
+            &self.watcher,
+            &self.file,
+            ProgressInfo {
+                percent: None,
+                out_time: None,
+                speed: None,
+                eta: None,
+            },
+        );
     }
 
     /// Parseia uma linha de progresso do ffmpeg (`-progress pipe:1`) e publica
     /// no health server se o throttle permitir. `progress=end` sempre publica.
     pub fn parse_and_publish(&self, line: &str) {
         let update = parse_progress_line(line);
-        let hs = self.health_server.clone();
-        let watcher = self.watcher.clone();
-        let file = self.file.clone();
-        let state = self.state.clone();
-        tokio::spawn(async move {
-            let mut publish_now = false;
-            {
-                let mut s = state.lock().await;
-                if let Some(us) = update.out_time_us {
-                    s.out_time_s = Some(us as f64 / 1_000_000.0);
-                    publish_now = true;
-                }
-                if let Some(ms) = update.out_time_ms {
-                    // ffmpeg's legacy out_time_ms is actually microseconds.
-                    s.out_time_s = Some(ms as f64 / 1_000_000.0);
-                    publish_now = true;
-                }
-                if let Some(ref t) = update.out_time {
-                    if let Some(secs) = parse_hhmmss(t) {
-                        s.out_time_s = Some(secs);
-                        publish_now = true;
-                    }
-                }
-                if let Some(sp) = update.speed {
-                    s.speed = Some(sp);
-                    publish_now = true;
-                }
-                if update.progress_end {
-                    publish_now = true;
-                }
-                if publish_now
-                    && s.last_publish.elapsed().as_millis() < PUBLISH_THROTTLE_MS as u128
-                    && !update.progress_end
-                {
-                    publish_now = false;
-                } else if publish_now {
-                    s.last_publish = Instant::now();
-                }
+        let mut publish_now = false;
+        let mut s = self.lock_state();
+
+        if let Some(us) = update.out_time_us {
+            s.out_time_s = Some(us as f64 / 1_000_000.0);
+            publish_now = true;
+        }
+        if let Some(ms) = update.out_time_ms {
+            // ffmpeg's legacy out_time_ms is actually microseconds.
+            s.out_time_s = Some(ms as f64 / 1_000_000.0);
+            publish_now = true;
+        }
+        if let Some(ref t) = update.out_time {
+            if let Some(secs) = parse_hhmmss(t) {
+                s.out_time_s = Some(secs);
+                publish_now = true;
             }
-            if publish_now {
-                let s = state.lock().await;
-                let percent = s
-                    .out_time_s
-                    .and_then(|ot| s.duration_s.map(|d| (ot / d * 100.0).clamp(0.0, 100.0)));
-                let eta = s.out_time_s.and_then(|ot| {
-                    s.duration_s
-                        .and_then(|d| s.speed.filter(|&sp| sp > 0.0).map(|sp| (d - ot) / sp))
-                });
-                let info = ProgressInfo {
-                    percent,
-                    out_time: s.out_time_s,
-                    speed: s.speed,
-                    eta,
-                };
-                drop(s);
-                let _ = hs.set_progress(&watcher, &file, info);
-            }
-            // progress=end garante publicação do estado final (fora do throttle).
-            if update.progress_end {
-                let s = state.lock().await;
-                let percent = s
-                    .out_time_s
-                    .and_then(|ot| s.duration_s.map(|d| (ot / d * 100.0).clamp(0.0, 100.0)));
-                let eta = s.out_time_s.and_then(|ot| {
-                    s.duration_s
-                        .and_then(|d| s.speed.filter(|&sp| sp > 0.0).map(|sp| (d - ot) / sp))
-                });
-                let info = ProgressInfo {
-                    percent,
-                    out_time: s.out_time_s,
-                    speed: s.speed,
-                    eta,
-                };
-                drop(s);
-                let _ = hs.set_progress(&watcher, &file, info);
-            }
+        }
+        if let Some(sp) = update.speed {
+            s.speed = Some(sp);
+            publish_now = true;
+        }
+        if update.progress_end {
+            publish_now = true;
+        }
+        if publish_now
+            && s.last_publish.elapsed().as_millis() < PUBLISH_THROTTLE_MS as u128
+            && !update.progress_end
+        {
+            publish_now = false;
+        } else if publish_now {
+            s.last_publish = Instant::now();
+        }
+        if !publish_now {
+            return;
+        }
+
+        let percent = s
+            .out_time_s
+            .and_then(|ot| s.duration_s.map(|d| (ot / d * 100.0).clamp(0.0, 100.0)));
+        let eta = s.out_time_s.and_then(|ot| {
+            s.duration_s
+                .and_then(|d| s.speed.filter(|&sp| sp > 0.0).map(|sp| (d - ot) / sp))
         });
+        let info = ProgressInfo {
+            percent,
+            out_time: s.out_time_s,
+            speed: s.speed,
+            eta,
+        };
+        let _ = self
+            .health_server
+            .set_progress(&self.watcher, &self.file, info);
     }
 
     /// Limpa progresso e logs FFmpeg deste job (chamado ao terminar: sucesso,
     /// erro, timeout ou abort).
     pub fn clear(&self) {
-        let hs = self.health_server.clone();
-        let watcher = self.watcher.clone();
-        let file = self.file.clone();
-        tokio::spawn(async move {
-            let _ = hs.clear_progress(&watcher, &file);
-            let _ = hs.clear_ffmpeg_logs(&watcher, &file);
-        });
+        let _ = self.health_server.clear_progress(&self.watcher, &self.file);
+        let _ = self
+            .health_server
+            .clear_ffmpeg_logs(&self.watcher, &self.file);
     }
 
     /// Acumula uma linha de log FFmpeg com prefixo `[stdout]`/`[stderr]`.
     pub fn push_line(&self, stream: &str, line: &str) {
         let prefixed = format!("[{}] {}", stream, line);
-        let hs = self.health_server.clone();
-        let watcher = self.watcher.clone();
-        let file = self.file.clone();
-        tokio::spawn(async move {
-            let _ = hs.push_ffmpeg_log(&watcher, &file, &prefixed);
-        });
+        let _ = self
+            .health_server
+            .push_ffmpeg_log(&self.watcher, &self.file, &prefixed);
     }
 }
 

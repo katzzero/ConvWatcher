@@ -445,11 +445,12 @@ http://localhost:8080/dashboard
 
 - **Dashboard password**: when `global.healthcheck.auth_password` is set, the dashboard stores the password in `sessionStorage` (never in the URL, never in `localStorage`, never logged) and sends `Authorization: Bearer <senha>` on every API/fetch call. A password bar (password input + Enter/Clear) appears automatically on 401, and the “Unauthorized — enter the dashboard password.” message is shown in the logs area (no top banner). `/health` stays open without a password for container healthchecks. The legacy key `auth_token` is still accepted (0.9.9 compatibility).
 - **Watcher name (U1)**: watcher cards show `w.name` as title (falling back to `watch_folder`) with `watch_folder` and `output_folder` as details.
-- **Logs (U6)**: “App log” / “Error log” selector (`/logs` or `/logs/errors`), selection persisted in `sessionStorage`, rendered as plain text.
-- **Refresh control (U7)**: 5s / 10s / 30s / Off selector plus “Refresh now”. Uses a rescheduled `setTimeout` (not a fixed `setInterval`); Off pauses for real. Preference persisted in `localStorage`.
+- **Logs (U6)**: “App log” / “Error log” / “FFmpeg output” selector (`/logs`, `/logs/errors`, `/api/ffmpeg`), selection persisted in `sessionStorage`, rendered as plain text. FFmpeg output shows `[stdout]`/`[stderr]` only while a job is active and keeps the last 200 lines or 64 KiB per job.
+- **Refresh control (U7)**: 1s / 2s / 5s / 10s / 30s / Off selector plus “Refresh now”. Uses a rescheduled `setTimeout` (not a fixed `setInterval`); Off pauses for real. Preference persisted in `localStorage`.
 - **Visible errors (U8)**: fetch failures are not swallowed. A banner with `role="alert"` / `aria-live`, per-section error messages, and a Retry button; 401 triggers the token flow, network/5xx show the error.
 - **Responsiveness (U12)**: history table in an `overflow-x:auto` wrapper; header with `flex-wrap`; adjusted padding/font on small screens.
 - **Accessibility (U14)**: `:focus-visible` on buttons/selects/inputs, `aria-label` on controls, `aria-live="polite"` on stats/alerts, and history status shown as text (not only color).
+- **Conversion progress**: `/api/queue` includes `progress` per active job (percent, out_time, speed, ETA). Video/audio use ffmpeg `-progress` plus ffprobe duration; without a duration the dashboard shows an indeterminate state.
 - **Version (U17)**: `/health` includes `"version"` and the header shows “ConvWatcher Dashboard vX.Y.Z”.
 - **Safe bind**: the server binds to `127.0.0.1` by default. If you expose `0.0.0.0`, set `auth_password` or keep the port firewalled.
 
