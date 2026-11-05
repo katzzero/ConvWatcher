@@ -306,9 +306,16 @@ impl HealthServer {
             match (method, path) {
                 (tiny_http::Method::Get, "/") | (tiny_http::Method::Get, "/dashboard") => {
                     let html = include_str!("dashboard.html");
-                    let _ = request.respond(
-                        tiny_http::Response::from_string(html).with_header(html_ct.clone()),
-                    );
+                    let mut response =
+                        tiny_http::Response::from_string(html).with_header(html_ct.clone());
+                    // The dashboard is embedded in the binary; never let a
+                    // browser keep a stale version after an upgrade.
+                    if let Ok(header) =
+                        tiny_http::Header::from_bytes(&b"Cache-Control"[..], &b"no-store"[..])
+                    {
+                        response.add_header(header);
+                    }
+                    let _ = request.respond(response);
                 }
                 (tiny_http::Method::Get, "/health") => {
                     let uptime = self.start_time.elapsed();
