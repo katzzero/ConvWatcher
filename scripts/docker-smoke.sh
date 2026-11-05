@@ -11,7 +11,12 @@ mkdir -p "$ROOT/target"
 TMP="$(mktemp -d "${SMOKE_TMP_ROOT:-$ROOT/target}/cw-smoke.XXXXXX")"
 cleanup() {
   docker rm -f "$NAME" >/dev/null 2>&1 || true
-  rm -rf "$TMP"
+  if [ -d "$TMP" ]; then
+    # The app creates logs/ as cw:700; fix ownership from a throwaway root
+    # container so the host runner can remove the temp workspace.
+    docker run --rm --user root -v "$TMP:/cleanup" "$IMAGE" sh -c 'chmod -R 777 /cleanup' >/dev/null 2>&1 || true
+    rm -rf "$TMP" 2>/dev/null || sudo rm -rf "$TMP" 2>/dev/null || true
+  fi
 }
 trap cleanup EXIT
 
