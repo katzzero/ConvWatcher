@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use std::time::Duration;
@@ -12,6 +12,7 @@ use tokio::sync::{broadcast, mpsc, Semaphore};
 
 use convwatcher::cli::Cli;
 use convwatcher::config;
+use convwatcher::config::global::GlobalConfig;
 use convwatcher::config::watch::WatchConfig;
 use convwatcher::daemon;
 use convwatcher::daemon::monitors;
@@ -36,6 +37,46 @@ async fn main() {
         }
         std::process::exit(1);
     }
+}
+
+fn validate_runtime_dependencies(global_config: &GlobalConfig) -> Result<()> {
+    let ffmpeg = Path::new(&global_config.ffmpeg_path);
+    if !ffmpeg.is_file() {
+        anyhow::bail!(
+            "ffmpeg not found at '{}'. Install ffmpeg or set `global.ffmpeg_path` \
+             (macOS Homebrew: /opt/homebrew/bin/ffmpeg; Linux/Docker: /usr/bin/ffmpeg).",
+            global_config.ffmpeg_path
+        );
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(meta) = ffmpeg.metadata() {
+            if meta.permissions().mode() & 0o111 == 0 {
+                anyhow::bail!(
+                    "ffmpeg at '{}' is not executable. Fix its permissions or set `global.ffmpeg_path`.",
+                    global_config.ffmpeg_path
+                );
+            }
+        }
+    }
+
+    let ffprobe = global_config
+        .ffprobe_path
+        .clone()
+        .or_else(|| {
+            ffmpeg
+                .parent()
+                .map(|p| p.join("ffprobe").to_string_lossy().to_string())
+        })
+        .unwrap_or_default();
+    if !ffprobe.is_empty() && !Path::new(&ffprobe).is_file() {
+        warn!(
+            "ffprobe not found at '{}'; duration checks and some media probes will be skipped",
+            ffprobe
+        );
+    }
+    Ok(())
 }
 
 async fn run() -> Result<()> {
@@ -68,6 +109,8 @@ async fn run() -> Result<()> {
     )?;
 
     info!("ConvWatcher v{} starting", env!("CARGO_PKG_VERSION"));
+
+    validate_runtime_dependencies(&global_config)?;
 
     if let Some(watch_folder) = &cli.watch {
         let quick_config = WatchConfig {

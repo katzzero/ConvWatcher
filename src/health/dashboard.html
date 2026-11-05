@@ -182,7 +182,7 @@ button:focus-visible, select:focus-visible, input:focus-visible {
   <h2>Conversion History</h2>
   <div class="history-wrap">
     <table>
-      <thead><tr><th>Time</th><th>Watcher</th><th>File</th><th>Status</th><th>Output</th></tr></thead>
+      <thead><tr><th>Time</th><th>Watcher</th><th>File</th><th>Status</th><th>Output / Error</th></tr></thead>
       <tbody id="history"></tbody>
     </table>
   </div>
@@ -476,9 +476,15 @@ function handleFetchError(e, section) {
   const msg = String(e);
   stopRefresh();
   if (msg === 'UNAUTHORIZED') {
-    showAlert('Unauthorized — enter password');
+    // Keep the page clean: the auth prompt belongs to the logs area, not a
+    // top-of-page banner. The password bar is shown so the user can recover.
+    hideAlert();
+    hideSectionError();
     showTokenBar();
-    showSectionError('Unauthorized — enter the dashboard password.');
+    const logsEl = document.getElementById('logs');
+    if (logsEl) {
+      logsEl.textContent = 'Unauthorized — enter the dashboard password.';
+    }
     return;
   }
   showAlert('Failed to load ' + section + ': ' + msg);

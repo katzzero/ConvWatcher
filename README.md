@@ -443,7 +443,7 @@ http://localhost:8080/dashboard
 
 ### Dashboard auth / UX
 
-- **Dashboard password**: when `global.healthcheck.auth_password` is set, the dashboard stores the password in `sessionStorage` (never in the URL, never in `localStorage`, never logged) and sends `Authorization: Bearer <senha>` on every API/fetch call. A password bar (password input + Enter/Clear) appears automatically on 401 with an “Unauthorized — enter password” banner. `/health` stays open without a password for container healthchecks. The legacy key `auth_token` is still accepted (0.9.9 compatibility).
+- **Dashboard password**: when `global.healthcheck.auth_password` is set, the dashboard stores the password in `sessionStorage` (never in the URL, never in `localStorage`, never logged) and sends `Authorization: Bearer <senha>` on every API/fetch call. A password bar (password input + Enter/Clear) appears automatically on 401, and the “Unauthorized — enter the dashboard password.” message is shown in the logs area (no top banner). `/health` stays open without a password for container healthchecks. The legacy key `auth_token` is still accepted (0.9.9 compatibility).
 - **Watcher name (U1)**: watcher cards show `w.name` as title (falling back to `watch_folder`) with `watch_folder` and `output_folder` as details.
 - **Logs (U6)**: “App log” / “Error log” selector (`/logs` or `/logs/errors`), selection persisted in `sessionStorage`, rendered as plain text.
 - **Refresh control (U7)**: 5s / 10s / 30s / Off selector plus “Refresh now”. Uses a rescheduled `setTimeout` (not a fixed `setInterval`); Off pauses for real. Preference persisted in `localStorage`.

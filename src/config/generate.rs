@@ -201,8 +201,8 @@ global:
   # Caminho absoluto do binário FFmpeg.
   # Usado para conversão de vídeo e áudio.
   # Obrigatório se o watcher usar tipo video ou audio.
-  # Default: /usr/bin/ffmpeg
-  ffmpeg_path: /usr/bin/ffmpeg
+  # Default: detected at first run (Homebrew or /usr/bin)
+  ffmpeg_path: {ffmpeg_path}
 
   # Caminho absoluto do binário FFprobe.
   # Opcional — se omitido, usa o mesmo diretório do ffmpeg_path.
@@ -387,6 +387,7 @@ watchers:
         outputs = outputs_str,
         logs = logs_str,
         secret = secret,
+        ffmpeg_path = default_global.ffmpeg_path,
     );
 
     write_secure_file(config_path, &default_yaml)

@@ -12,6 +12,20 @@ fn default_stable_time() -> u64 {
     5000
 }
 fn default_ffmpeg_path() -> String {
+    if let Ok(path) = std::env::var("FFMPEG_PATH") {
+        if std::path::Path::new(&path).is_file() {
+            return path;
+        }
+    }
+    for candidate in [
+        "/opt/homebrew/bin/ffmpeg",
+        "/usr/local/bin/ffmpeg",
+        "/usr/bin/ffmpeg",
+    ] {
+        if std::path::Path::new(candidate).is_file() {
+            return candidate.to_string();
+        }
+    }
     "/usr/bin/ffmpeg".to_string()
 }
 fn default_max_concurrent() -> u32 {

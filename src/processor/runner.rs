@@ -53,7 +53,7 @@ pub async fn run_conversion<F, Fut>(
                     watcher: watcher_name.clone(),
                     file: file_name.clone(),
                     status: "error".to_string(),
-                    output: String::new(),
+                    output: error_summary(&msg),
                 })
                 .await;
             crate::utils::path::handle_input_file(&file_path, &input_file_action, false);
@@ -95,7 +95,7 @@ pub async fn run_conversion<F, Fut>(
                     watcher: watcher_name.clone(),
                     file: file_name.clone(),
                     status: "error".to_string(),
-                    output: String::new(),
+                    output: error_summary(&msg),
                 })
                 .await;
             crate::utils::path::handle_input_file(&file_path, &input_file_action, false);
@@ -108,6 +108,34 @@ pub async fn run_conversion<F, Fut>(
         .clear_processing(&watcher_name, &file_name);
 }
 
+fn error_summary(msg: &str) -> String {
+    const MAX: usize = 1000;
+    const KEEP_LINES: usize = 8;
+
+    // FFmpeg prints a long banner before the real error. Keep the tail so the
+    // dashboard history shows the actionable message, not the build info.
+    let mut lines: Vec<&str> = msg
+        .lines()
+        .map(str::trim)
+        .filter(|line| {
+            !line.is_empty()
+                && !line.starts_with("lib")
+                && !line.starts_with("configuration:")
+                && !line.starts_with("ffmpeg version")
+                && !line.starts_with("built with")
+        })
+        .collect();
+    if lines.len() > KEEP_LINES {
+        lines = lines.split_off(lines.len() - KEEP_LINES);
+    }
+    let mut summary = lines.join(" | ").replace('\n', " ");
+    if summary.chars().count() > MAX {
+        summary = summary.chars().take(MAX).collect();
+        summary.push('…');
+    }
+    summary
+}
+
 fn cleanup_partial_output(path: &Path) {
     if path.exists() {
         if let Err(e) = std::fs::remove_file(path) {
@@ -115,5 +143,20 @@ fn cleanup_partial_output(path: &Path) {
         } else {
             info!("Cleaned up partial output: {:?}", path);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn error_summary_keeps_actionable_tail() {
+        let msg = "ffmpeg version 8.1\nconfiguration: --enable-gpl\n  libavutil 60\n  libavcodec 62\n  libavformat 62\n  libavdevice 62\n  libavfilter 11\n  libswscale 9\n[in#0] invalid data\nError opening input file /x.mp4";
+        let summary = error_summary(msg);
+        assert!(summary.contains("Error opening input file"));
+        assert!(!summary.contains("ffmpeg version 8.1"));
+        assert!(!summary.contains("libavutil"));
+        assert!(!summary.contains('\n'));
     }
 }
