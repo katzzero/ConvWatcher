@@ -6,7 +6,9 @@ set -euo pipefail
 IMAGE="${1:-convwatcher:0.9.10-local}"
 NAME="cw-smoke-$$"
 PORT="${SMOKE_PORT:-18080}"
-TMP="$(mktemp -d "${TMPDIR:-/tmp}/cw-smoke.XXXXXX")"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+mkdir -p "$ROOT/target"
+TMP="$(mktemp -d "${SMOKE_TMP_ROOT:-$ROOT/target}/cw-smoke.XXXXXX")"
 cleanup() {
   docker rm -f "$NAME" >/dev/null 2>&1 || true
   rm -rf "$TMP"
@@ -74,13 +76,18 @@ echo "image user: ${IMAGE_USER:-<empty>}"
 [ "${IMAGE_USER:-}" = "cw" ] || { echo "FAIL: image does not run as cw" >&2; exit 1; }
 
 echo "== start container =="
+# On some Docker Desktop/colima bind mounts the host mode is not preserved
+# (the mount appears root-owned), so bootstrap as root, fix ownership, then
+# drop to the image's unprivileged user for the actual application process.
 docker run -d --name "$NAME" \
+  --user root \
   -p "127.0.0.1:${PORT}:8080" \
   -v "$TMP/config:/app/config" \
   -v "$TMP/inputs:/app/inputs" \
   -v "$TMP/outputs:/app/outputs" \
   -v "$TMP/logs:/app/logs" \
-  "$IMAGE" --config /app/config/config.yaml --no-daemon --level info >/dev/null
+  --entrypoint sh \
+  "$IMAGE" -c 'chown -R cw:cw /app/config /app/inputs /app/outputs /app/logs && exec su -s /bin/sh cw -c "/usr/local/bin/convwatcher --config /app/config/config.yaml --no-daemon --level info"' >/dev/null
 
 for _ in $(seq 1 60); do
   if curl -fsS "http://127.0.0.1:${PORT}/health" >/tmp/cw-smoke-health.json 2>/dev/null; then break; fi
@@ -91,7 +98,11 @@ for _ in $(seq 1 60); do
   fi
   sleep 1
 done
-curl -fsS "http://127.0.0.1:${PORT}/health" >/tmp/cw-smoke-health.json
+if ! curl -fsS "http://127.0.0.1:${PORT}/health" >/tmp/cw-smoke-health.json; then
+  echo "FAIL: health endpoint not reachable" >&2
+  docker logs "$NAME" >&2 || true
+  exit 1
+fi
 grep -q '"version"' /tmp/cw-smoke-health.json || { echo "FAIL: /health missing version" >&2; cat /tmp/cw-smoke-health.json >&2; exit 1; }
 echo "health: $(cat /tmp/cw-smoke-health.json)"
 
@@ -102,13 +113,13 @@ echo "== dashboard/auth =="
 echo "dashboard 200; API 401/200 with password: OK"
 
 echo "== ffmpeg =="
-docker exec "$NAME" /usr/bin/ffmpeg -version >/dev/null
-docker exec "$NAME" /usr/bin/ffprobe -version >/dev/null
-[ "$(docker exec "$NAME" id -u)" != "0" ] || { echo "FAIL: container runs as root" >&2; exit 1; }
+docker exec --user cw "$NAME" /usr/bin/ffmpeg -version >/dev/null
+docker exec --user cw "$NAME" /usr/bin/ffprobe -version >/dev/null
+[ "$(docker exec --user cw "$NAME" id -u)" != "0" ] || { echo "FAIL: container runs as root" >&2; exit 1; }
 echo "ffmpeg/ffprobe OK; non-root OK"
 
 echo "== conversion inside container =="
-docker exec "$NAME" /usr/bin/ffmpeg -f lavfi -i testsrc=duration=1:size=64x64:rate=1 -y /app/inputs/default/smoke.mp4 >/dev/null 2>&1
+docker exec --user cw "$NAME" /usr/bin/ffmpeg -f lavfi -i testsrc=duration=1:size=64x64:rate=1 -y /app/inputs/default/smoke.mp4 >/dev/null 2>&1
 for _ in $(seq 1 60); do
   if find "$TMP/outputs/default" -maxdepth 1 -type f | grep -q .; then break; fi
   sleep 1
