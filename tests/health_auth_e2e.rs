@@ -255,6 +255,17 @@ watchers:
         code_with_token
     );
 
+    // A missing error log must be an empty 200, not a 500 (dashboard U6).
+    let empty_log_code = curl_code(
+        &format!("{}/logs/errors", base),
+        &["-H", "Authorization: Bearer testtoken"],
+    )
+    .unwrap_or_default();
+    assert_eq!(
+        empty_log_code, "200",
+        "/logs/errors should return 200 when the file does not exist yet"
+    );
+
     let _ = child.kill();
     let _ = child.wait();
     let _ = std::fs::remove_dir_all(&tmp);

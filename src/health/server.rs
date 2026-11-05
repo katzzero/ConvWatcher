@@ -366,7 +366,7 @@ impl HealthServer {
                     );
                 }
                 (tiny_http::Method::Get, "/logs") => match &self.app_log_path {
-                    Some(path) => match read_tail(path, 100) {
+                    Some(path) => match read_tail_if_exists(path, 100) {
                         Ok(content) => {
                             let _ = request.respond(
                                 tiny_http::Response::from_string(content)
@@ -391,7 +391,7 @@ impl HealthServer {
                     }
                 },
                 (tiny_http::Method::Get, "/logs/errors") => match &self.error_log_path {
-                    Some(path) => match read_tail(path, 100) {
+                    Some(path) => match read_tail_if_exists(path, 100) {
                         Ok(content) => {
                             let _ = request.respond(
                                 tiny_http::Response::from_string(content)
@@ -416,7 +416,7 @@ impl HealthServer {
                     }
                 },
                 (tiny_http::Method::Get, "/logs/app") => match &self.app_log_path {
-                    Some(path) => match read_tail(path, 100) {
+                    Some(path) => match read_tail_if_exists(path, 100) {
                         Ok(content) => {
                             let _ = request.respond(
                                 tiny_http::Response::from_string(content)
@@ -450,6 +450,15 @@ impl HealthServer {
 
         Ok(())
     }
+}
+
+/// Treat a missing log file as an empty log (not a 500). This is normal on
+/// first run or when no errors have been recorded yet.
+fn read_tail_if_exists(path: &str, max_lines: usize) -> Result<String> {
+    if !std::path::Path::new(path).exists() {
+        return Ok(String::new());
+    }
+    read_tail(path, max_lines)
 }
 
 fn read_tail(path: &str, max_lines: usize) -> Result<String> {
