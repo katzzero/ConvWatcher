@@ -108,3 +108,30 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           cache-from: type=gha,scope=convwatcher
           cache-to: type=gha,mode=max,scope=convwatcher
+  docker-smoke:
+    needs: build-and-push
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      # actions/checkout@v4 -> 11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      # docker/login-action@v3 -> c94ce9fb468520275223c153574b00df6fe4bcc9
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ${{ env.REGISTRY_GHCR }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Pull released image
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          docker pull "${REGISTRY_GHCR}/${GITHUB_REPOSITORY_OWNER}/convwatcher:${TAG}"
+      - name: Run container smoke test
+        env:
+          SMOKE_PORT: "18080"
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          ./scripts/docker-smoke.sh "${REGISTRY_GHCR}/${GITHUB_REPOSITORY_OWNER}/convwatcher:${TAG}"

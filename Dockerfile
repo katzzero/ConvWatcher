@@ -46,6 +46,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libx265-dev \
     libvpx-dev \
     libaom-dev \
+    libwebp-dev \
     libmp3lame-dev \
     libopus-dev \
     libvorbis-dev \
@@ -77,6 +78,7 @@ RUN git clone --depth 1 --branch 7.1 https://github.com/nyanmisaka/ffmpeg-rockch
         --enable-libx265 \
         --enable-libvpx \
         --enable-libaom \
+        --enable-libwebp \
         --enable-libmp3lame \
         --enable-libopus \
         --enable-libvorbis \
@@ -135,8 +137,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libdrm-dev \
     libva-dev \
     libx264-dev \
+    libx265-dev \
     libvpx-dev \
     libaom-dev \
+    libwebp-dev \
     libmp3lame-dev \
     libopus-dev \
     libvorbis-dev \
@@ -166,8 +170,10 @@ RUN git clone --depth 1 --branch n7.1 https://github.com/FFmpeg/FFmpeg.git /tmp/
         --disable-static \
         --enable-shared \
         --enable-libx264 \
+        --enable-libx265 \
         --enable-libvpx \
         --enable-libaom \
+        --enable-libwebp \
         --enable-libmp3lame \
         --enable-libopus \
         --enable-libvorbis \
@@ -203,7 +209,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && pip3 install --no-cache-dir img2pdf --break-system-packages \
     && rm -rf /var/lib/apt/lists/*
 
-FROM runtime-${TARGETARCH}
+FROM runtime-${TARGETARCH} AS final
 
 # Create non-root user 'cw' for security (no home directory).
 RUN useradd -r -s /bin/false --no-create-home cw

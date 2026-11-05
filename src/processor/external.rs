@@ -176,6 +176,36 @@ const ALLOWED_BINARIES: &[&str] = &[
     "soxi",
 ];
 
+/// Tokenize a command template, honoring single/double quotes so presets can
+/// pass arguments containing spaces (e.g. HandBrake's `--preset 'Fast 1080p30'`).
+/// No shell expansion is performed.
+fn tokenize_command(template: &str) -> Result<Vec<String>> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut quote: Option<char> = None;
+
+    for ch in template.chars() {
+        match quote {
+            Some(q) if ch == q => quote = None,
+            Some(_) => current.push(ch),
+            None if ch == '\'' || ch == '"' => quote = Some(ch),
+            None if ch.is_whitespace() => {
+                if !current.is_empty() {
+                    tokens.push(std::mem::take(&mut current));
+                }
+            }
+            None => current.push(ch),
+        }
+    }
+    if quote.is_some() {
+        bail!("Unclosed quote in command template");
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    Ok(tokens)
+}
+
 /// Split template into argv tokens, then replace placeholders in each token
 /// individually. This preserves paths containing whitespace as single argv
 /// elements. Validates expanded tokens for path traversal and unsafe absolute
@@ -189,7 +219,7 @@ fn build_argv(
     ext: &str,
     output_folder: &str,
 ) -> Result<Vec<String>> {
-    let tokens: Vec<&str> = template.split_whitespace().collect();
+    let tokens = tokenize_command(template)?;
     if tokens.is_empty() {
         bail!("Empty command template");
     }
@@ -202,7 +232,7 @@ fn build_argv(
             .replace("{basename}", basename)
             .replace("{ext}", ext)
             .replace("{output_folder}", output_folder);
-        (*t, r)
+        (t.as_str(), r)
     }) {
         // Validate no path traversal in expanded tokens via proper component iteration
         let p = std::path::Path::new(&replaced);
@@ -279,6 +309,21 @@ mod tests {
             argv,
             vec!["ffmpeg", "-i", "/in/video.mp4", "/out/video_h264.mp4"]
         );
+    }
+
+    #[test]
+    fn test_build_argv_honors_quotes() {
+        let argv = build_argv(
+            "HandBrakeCLI -i {input} -o {output} --preset 'Fast 1080p30'",
+            "/tmp/in file.mkv",
+            "/tmp/out file.mp4",
+            "base",
+            "mp4",
+            "/tmp",
+        )
+        .unwrap();
+        assert_eq!(argv[5], "--preset");
+        assert_eq!(argv[6], "Fast 1080p30");
     }
 
     #[test]

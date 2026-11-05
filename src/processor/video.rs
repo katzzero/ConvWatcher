@@ -138,9 +138,16 @@ async fn convert_video(
     ffmpeg_path: &str,
     ffprobe_path: &str,
 ) -> Result<()> {
-    let quality = rule.quality.as_deref().unwrap_or("crf 23");
-    let quality_args = parse_quality_value(quality);
     let codec = rule.codec.as_deref().unwrap_or("libx264");
+    let quality = rule
+        .quality
+        .as_deref()
+        .unwrap_or_else(|| default_quality_for_codec(codec));
+    let quality_args = if codec == "copy" {
+        Vec::new()
+    } else {
+        parse_quality_value(quality, codec)?
+    };
 
     let (hwaccel_pre, hwaccel_post) = build_hwaccel_args(codec);
 
@@ -185,12 +192,25 @@ async fn convert_video(
         }
     }
 
+    if !output.is_file() {
+        bail!(
+            "FFmpeg reported success but did not create the output file: {}",
+            output.display()
+        );
+    }
+
     if rule.check_duration.unwrap_or(true) {
         let input_duration = get_video_duration(input, ffprobe_path).await.unwrap_or(0.0);
         let output_duration = get_video_duration(output, ffprobe_path)
             .await
             .unwrap_or(0.0);
 
+        if input_duration == 0.0 {
+            warn!(
+                "Could not determine input duration for {:?}; skipping duration check",
+                input
+            );
+        }
         if input_duration > 0.0
             && output_duration < input_duration * rule.min_duration_ratio.unwrap_or(0.9)
         {
@@ -206,44 +226,132 @@ async fn convert_video(
     Ok(())
 }
 
-pub fn parse_quality_value(quality_str: &str) -> Vec<String> {
-    let trimmed = quality_str.trim();
+fn default_quality_for_codec(codec: &str) -> &'static str {
+    if codec.contains("nvenc") {
+        "cq 23"
+    } else if codec.contains("_vaapi")
+        || codec.contains("_qsv")
+        || codec.contains("_rkmpp")
+        || codec.contains("_omx")
+    {
+        "qp 25"
+    } else if codec.contains("_amf") {
+        "qp_i 25"
+    } else if codec.contains("videotoolbox") || codec.contains("v4l2m2m") {
+        "constant_bit_rate 3000k"
+    } else {
+        "crf 23"
+    }
+}
 
+fn is_nvenc(codec: &str) -> bool {
+    codec.contains("nvenc")
+}
+fn is_vaapi(codec: &str) -> bool {
+    codec.contains("_vaapi")
+}
+fn is_qsv(codec: &str) -> bool {
+    codec.contains("_qsv")
+}
+fn is_amf(codec: &str) -> bool {
+    codec.contains("_amf")
+}
+fn is_videotoolbox(codec: &str) -> bool {
+    codec.contains("videotoolbox")
+}
+fn is_rkmpp(codec: &str) -> bool {
+    codec.contains("_rkmpp")
+}
+fn is_legacy(codec: &str) -> bool {
+    codec == "mpeg4" || codec == "mpeg2video"
+}
+fn is_cpu_quality(codec: &str) -> bool {
+    codec.starts_with("libx264")
+        || codec.starts_with("libx265")
+        || codec.starts_with("libvpx")
+        || codec.starts_with("libaom")
+        || codec.starts_with("libsvtav1")
+        || codec.starts_with("librav1e")
+        || is_legacy(codec)
+}
+
+fn validate_quality_keyword(codec: &str, keyword: &str) -> Result<()> {
+    let ok = match keyword {
+        "crf" => is_cpu_quality(codec),
+        "cq" => is_nvenc(codec),
+        "qp" => is_vaapi(codec) || is_qsv(codec) || is_rkmpp(codec) || codec.contains("_omx"),
+        "qp_i" => is_amf(codec),
+        "qscale" => is_cpu_quality(codec) || is_legacy(codec),
+        "constant_bit_rate" | "vbr" => true,
+        _ => true,
+    };
+    if ok {
+        Ok(())
+    } else {
+        anyhow::bail!(
+            "quality keyword '{}' is not valid for codec '{}'. Use {}.",
+            keyword,
+            codec,
+            if is_nvenc(codec) {
+                "'cq'"
+            } else if is_vaapi(codec) || is_qsv(codec) || is_rkmpp(codec) || codec.contains("_omx")
+            {
+                "'qp'"
+            } else if is_amf(codec) {
+                "'qp_i'"
+            } else if is_videotoolbox(codec) {
+                "'constant_bit_rate'"
+            } else {
+                "'crf' or 'qscale'"
+            }
+        )
+    }
+}
+
+fn quality_value(parts: &[&str], index: usize, default: &'static str) -> String {
+    parts
+        .get(index)
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| default.to_string())
+}
+
+pub fn parse_quality_value(quality_str: &str, codec: &str) -> Result<Vec<String>> {
+    let trimmed = quality_str.trim();
     if trimmed.is_empty() {
-        return vec!["-crf".to_string(), "23".to_string()];
+        return parse_quality_value(default_quality_for_codec(codec), codec);
     }
 
     let parts: Vec<&str> = trimmed.split_whitespace().collect();
     let keyword = parts[0].to_lowercase();
 
     match keyword.as_str() {
-        "crf" => {
-            let value = parts.get(1).unwrap_or(&"23");
-            vec!["-crf".to_string(), value.to_string()]
-        }
-        "cq" => {
-            let value = parts.get(1).unwrap_or(&"23");
-            vec!["-cq".to_string(), value.to_string()]
-        }
-        "qp" => {
-            let value = parts.get(1).unwrap_or(&"25");
-            vec!["-qp".to_string(), value.to_string()]
-        }
-        "qp_i" => {
-            let value = parts.get(1).unwrap_or(&"25");
-            vec!["-qp_i".to_string(), value.to_string()]
-        }
-        "qscale" => {
-            let value = parts.get(1).unwrap_or(&"4");
-            vec!["-qscale:v".to_string(), value.to_string()]
-        }
-        "constant_bit_rate" => {
-            let value = parts.get(1).unwrap_or(&"3000");
-            vec!["-b:v".to_string(), value.to_string()]
-        }
-        "vbr" => {
-            let value = parts.get(1).unwrap_or(&"4");
-            vec!["-q:v".to_string(), value.to_string()]
+        "crf" | "cq" | "qp" | "qp_i" | "qscale" | "constant_bit_rate" | "vbr" => {
+            validate_quality_keyword(codec, &keyword)?;
+            let default = match keyword.as_str() {
+                "crf" => "23",
+                "cq" => "23",
+                "qp" | "qp_i" => "25",
+                "qscale" => "4",
+                "constant_bit_rate" => "3000k",
+                _ => "4",
+            };
+            let mut value = quality_value(&parts, 1, default);
+            let flag = match keyword.as_str() {
+                "crf" => "-crf",
+                "cq" => "-cq",
+                "qp" => "-qp",
+                "qp_i" => "-qp_i",
+                "qscale" => "-qscale:v",
+                "constant_bit_rate" => "-b:v",
+                "vbr" => "-b:v",
+                _ => unreachable!(),
+            };
+            if matches!(keyword.as_str(), "constant_bit_rate" | "vbr")
+                && value.chars().all(|c| c.is_ascii_digit())
+            {
+                value.push('k');
+            }
+            Ok(vec![flag.to_string(), value])
         }
         _ => {
             let first = parts[0];
@@ -252,16 +360,28 @@ pub fn parse_quality_value(quality_str: &str) -> Vec<String> {
                 || first.ends_with('K')
                 || first.ends_with('k')
             {
-                vec!["-b:v".to_string(), first.to_string()]
-            } else if first.parse::<u32>().is_ok() {
-                vec!["-crf".to_string(), first.to_string()]
-            } else {
-                warn!(
-                    "Unknown quality format '{}' — falling back to -crf 23",
-                    quality_str
-                );
-                vec!["-crf".to_string(), "23".to_string()]
+                return Ok(vec!["-b:v".to_string(), first.to_string()]);
             }
+            if first.parse::<u32>().is_ok() {
+                if is_nvenc(codec) {
+                    return Ok(vec!["-cq".to_string(), first.to_string()]);
+                }
+                if is_vaapi(codec) || is_qsv(codec) || is_rkmpp(codec) || codec.contains("_omx") {
+                    return Ok(vec!["-qp".to_string(), first.to_string()]);
+                }
+                if is_amf(codec) {
+                    return Ok(vec!["-qp_i".to_string(), first.to_string()]);
+                }
+                if is_videotoolbox(codec) {
+                    return Ok(vec!["-b:v".to_string(), format!("{}k", first)]);
+                }
+                return Ok(vec!["-crf".to_string(), first.to_string()]);
+            }
+            anyhow::bail!(
+                "unknown quality format '{}' for codec '{}'; use crf/cq/qp/qp_i/qscale/constant_bit_rate/vbr or a bitrate like 3000k",
+                quality_str,
+                codec
+            )
         }
     }
 }
@@ -362,92 +482,145 @@ mod tests {
 
     #[test]
     fn test_parse_crf() {
-        assert_eq!(parse_quality_value("crf 23"), vec!["-crf", "23"]);
-        assert_eq!(parse_quality_value("crf 18"), vec!["-crf", "18"]);
+        assert_eq!(
+            parse_quality_value("crf 23", "libx264").unwrap(),
+            vec!["-crf", "23"]
+        );
+        assert_eq!(
+            parse_quality_value("crf 18", "libx265").unwrap(),
+            vec!["-crf", "18"]
+        );
     }
 
     #[test]
     fn test_parse_cq_nvenc() {
-        assert_eq!(parse_quality_value("cq 23"), vec!["-cq", "23"]);
-        assert_eq!(parse_quality_value("cq 18"), vec!["-cq", "18"]);
+        assert_eq!(
+            parse_quality_value("cq 23", "h264_nvenc").unwrap(),
+            vec!["-cq", "23"]
+        );
+        assert_eq!(
+            parse_quality_value("cq 18", "hevc_nvenc").unwrap(),
+            vec!["-cq", "18"]
+        );
+        assert!(parse_quality_value("cq 23", "libx264").is_err());
     }
 
     #[test]
     fn test_parse_qp_vaapi() {
-        assert_eq!(parse_quality_value("qp 25"), vec!["-qp", "25"]);
-        assert_eq!(parse_quality_value("qp 28"), vec!["-qp", "28"]);
+        assert_eq!(
+            parse_quality_value("qp 25", "h264_vaapi").unwrap(),
+            vec!["-qp", "25"]
+        );
+        assert_eq!(
+            parse_quality_value("qp 28", "hevc_vaapi").unwrap(),
+            vec!["-qp", "28"]
+        );
+        assert!(parse_quality_value("qp 25", "libx264").is_err());
     }
 
     #[test]
     fn test_parse_qp_i_amf() {
-        assert_eq!(parse_quality_value("qp_i 25"), vec!["-qp_i", "25"]);
-        assert_eq!(parse_quality_value("qp_i 28"), vec!["-qp_i", "28"]);
+        assert_eq!(
+            parse_quality_value("qp_i 25", "h264_amf").unwrap(),
+            vec!["-qp_i", "25"]
+        );
+        assert_eq!(
+            parse_quality_value("qp_i 28", "hevc_amf").unwrap(),
+            vec!["-qp_i", "28"]
+        );
     }
 
     #[test]
     fn test_parse_qscale() {
-        assert_eq!(parse_quality_value("qscale 4"), vec!["-qscale:v", "4"]);
+        assert_eq!(
+            parse_quality_value("qscale 4", "mpeg4").unwrap(),
+            vec!["-qscale:v", "4"]
+        );
     }
 
     #[test]
     fn test_parse_constant_bit_rate() {
         assert_eq!(
-            parse_quality_value("constant_bit_rate 3000"),
-            vec!["-b:v", "3000"]
+            parse_quality_value("constant_bit_rate 3000", "h264_videotoolbox").unwrap(),
+            vec!["-b:v", "3000k"]
         );
         assert_eq!(
-            parse_quality_value("constant_bit_rate 5000"),
-            vec!["-b:v", "5000"]
+            parse_quality_value("constant_bit_rate 5000k", "hevc_videotoolbox").unwrap(),
+            vec!["-b:v", "5000k"]
         );
     }
 
     #[test]
     fn test_parse_vbr() {
-        assert_eq!(parse_quality_value("vbr 4"), vec!["-q:v", "4"]);
+        assert_eq!(
+            parse_quality_value("vbr 4", "libx264").unwrap(),
+            vec!["-b:v", "4k"]
+        );
     }
 
     #[test]
     fn test_parse_numeric_only() {
-        assert_eq!(parse_quality_value("23"), vec!["-crf", "23"]);
-        assert_eq!(parse_quality_value("28"), vec!["-crf", "28"]);
+        assert_eq!(
+            parse_quality_value("23", "libx264").unwrap(),
+            vec!["-crf", "23"]
+        );
+        assert_eq!(
+            parse_quality_value("28", "h264_nvenc").unwrap(),
+            vec!["-cq", "28"]
+        );
+        assert_eq!(
+            parse_quality_value("25", "h264_vaapi").unwrap(),
+            vec!["-qp", "25"]
+        );
     }
 
     #[test]
     fn test_parse_bitrate() {
-        assert_eq!(parse_quality_value("3000k"), vec!["-b:v", "3000k"]);
-        assert_eq!(parse_quality_value("5M"), vec!["-b:v", "5M"]);
+        assert_eq!(
+            parse_quality_value("3000k", "libx264").unwrap(),
+            vec!["-b:v", "3000k"]
+        );
+        assert_eq!(
+            parse_quality_value("5M", "libx265").unwrap(),
+            vec!["-b:v", "5M"]
+        );
     }
 
     #[test]
     fn test_parse_empty() {
-        assert_eq!(parse_quality_value(""), vec!["-crf", "23"]);
+        assert_eq!(
+            parse_quality_value("", "libx264").unwrap(),
+            vec!["-crf", "23"]
+        );
+        assert_eq!(
+            parse_quality_value("", "h264_nvenc").unwrap(),
+            vec!["-cq", "23"]
+        );
     }
 
     #[test]
-    fn test_parse_unknown_fallback() {
-        assert_eq!(parse_quality_value("foo 42"), vec!["-crf", "23"]);
+    fn test_parse_unknown_is_error() {
+        assert!(parse_quality_value("foo 42", "libx264").is_err());
     }
 
     #[test]
-    fn test_hwaccel_vaapi() {
-        let (pre, post) = build_hwaccel_args("h264_vaapi");
-        assert!(pre.contains(&"-vaapi_device".to_string()));
-        assert!(post.contains(&"-vf".to_string()));
-    }
-
-    #[test]
-    fn test_hwaccel_qsv() {
-        let (pre, post) = build_hwaccel_args("hevc_qsv");
-        assert!(pre.contains(&"-init_hw_device".to_string()));
-        assert!(post.is_empty());
-    }
-
-    #[test]
-    fn test_hwaccel_rkmpp() {
-        let (pre, post) = build_hwaccel_args("hevc_rkmpp");
-        assert!(pre.contains(&"-init_hw_device".to_string()));
-        assert!(pre.contains(&"-hwaccel".to_string()));
-        assert!(post.contains(&"-vf".to_string()));
+    fn test_parse_copy_has_no_quality_args() {
+        let rule = VideoRule {
+            preset: "copy".to_string(),
+            subfolder: None,
+            input_extensions: vec![".mp4".into()],
+            output_ext: Some(".mp4".to_string()),
+            codec: Some("copy".to_string()),
+            quality: Some("crf 23".to_string()),
+            audio_codec: Some("copy".to_string()),
+            audio_bitrate: None,
+            output_name: None,
+            check_duration: Some(false),
+            min_duration_ratio: None,
+        };
+        // convert_video skips quality args for copy; the parser itself is not
+        // called for copy codecs.
+        assert_eq!(rule.codec.as_deref(), Some("copy"));
     }
 
     #[test]

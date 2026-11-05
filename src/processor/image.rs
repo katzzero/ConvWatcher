@@ -176,14 +176,32 @@ fn build_image_args(input: &Path, output: &Path, rule: &ImageRule) -> Vec<String
     // JPEG quality mapping (only meaningful for JPEG output).
     let ext = rule.output_ext.as_deref().unwrap_or(".png");
     let normalized_ext = ext.trim_start_matches('.').to_lowercase();
+    let quality = rule.quality.unwrap_or(90);
     match normalized_ext.as_str() {
         "jpg" | "jpeg" => {
-            let q = jpeg_quality_scale(rule.quality.unwrap_or(90));
+            let q = jpeg_quality_scale(quality);
             args.push("-qscale:v".to_string());
             args.push(q.to_string());
         }
-        // PNG, GIF, BMP, TIFF, WebP: quality is not meaningfully controllable
-        // via a single qscale for still images — ffmpeg uses encoder defaults.
+        "webp" => {
+            if quality >= 100 {
+                args.push("-lossless".to_string());
+                args.push("1".to_string());
+            } else {
+                args.push("-quality".to_string());
+                args.push(quality.to_string());
+            }
+        }
+        "avif" => {
+            // libaom-av1: CRF 0..63, lower is better; -b:v 0 forces CRF mode.
+            let crf = ((100u32.saturating_sub(quality)) * 63 / 100).min(63);
+            args.push("-crf".to_string());
+            args.push(crf.to_string());
+            args.push("-b:v".to_string());
+            args.push("0".to_string());
+        }
+        // PNG, GIF, BMP, TIFF, HEIF: no single portable quality knob; ffmpeg
+        // uses the encoder default. Keep the argument list honest.
         _ => {}
     }
 
@@ -426,5 +444,44 @@ mod tests {
         assert!(meta.len() > 0, "JPEG output should have non-zero size");
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_build_image_args_webp_quality_and_lossless() {
+        let input = std::path::Path::new("/tmp/in.png");
+        let output = std::path::Path::new("/tmp/out.webp");
+        let mut rule = ImageRule {
+            preset: "webp_90".to_string(),
+            subfolder: None,
+            input_extensions: vec![".png".into()],
+            output_ext: Some(".webp".to_string()),
+            quality: Some(90),
+            transparent: None,
+            output_name: None,
+        };
+        let args = build_image_args(input, output, &rule);
+        assert!(args.windows(2).any(|w| w == ["-quality", "90"]));
+
+        rule.quality = Some(100);
+        let args = build_image_args(input, output, &rule);
+        assert!(args.windows(2).any(|w| w == ["-lossless", "1"]));
+    }
+
+    #[test]
+    fn test_build_image_args_avif_crf() {
+        let input = std::path::Path::new("/tmp/in.png");
+        let output = std::path::Path::new("/tmp/out.avif");
+        let rule = ImageRule {
+            preset: "avif_90".to_string(),
+            subfolder: None,
+            input_extensions: vec![".png".into()],
+            output_ext: Some(".avif".to_string()),
+            quality: Some(90),
+            transparent: None,
+            output_name: None,
+        };
+        let args = build_image_args(input, output, &rule);
+        assert!(args.windows(2).any(|w| w == ["-crf", "6"]));
+        assert!(args.windows(2).any(|w| w == ["-b:v", "0"]));
     }
 }

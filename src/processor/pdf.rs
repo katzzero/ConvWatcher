@@ -141,13 +141,19 @@ async fn compress_pdf(input: &Path, output: &Path, quality: Option<&PdfQuality>)
     Ok(())
 }
 
-async fn convert_to_pdfa(input: &Path, output: &Path, version: &Option<String>) -> Result<()> {
-    let pdfa = match version.as_deref() {
-        Some("2b") | None => "2",
-        Some("3b") => "3",
-        Some("4") => "4",
+fn pdfa_version(version: &Option<String>) -> &'static str {
+    let normalized = version.as_deref().unwrap_or("2b").to_lowercase();
+    match normalized.as_str() {
+        "1b" | "1" => "1",
+        "2b" | "2" => "2",
+        "3b" | "3" => "3",
+        "4" => "4",
         _ => "2",
-    };
+    }
+}
+
+async fn convert_to_pdfa(input: &Path, output: &Path, version: &Option<String>) -> Result<()> {
+    let pdfa = pdfa_version(version);
 
     let output_result = Command::new("gs")
         .kill_on_drop(true)
@@ -249,7 +255,12 @@ async fn linearize_pdf(input: &Path, output: &Path) -> Result<()> {
 }
 
 async fn encrypt_pdf(input: &Path, output: &Path, password: &Option<String>) -> Result<()> {
-    let pw = password.as_deref().unwrap_or("default");
+    let pw = password
+        .as_deref()
+        .filter(|p| !p.is_empty())
+        .ok_or_else(|| {
+            anyhow::anyhow!("PDF encrypt requires a non-empty `password` in the rule")
+        })?;
 
     let output_result = Command::new("qpdf")
         .kill_on_drop(true)
@@ -334,4 +345,18 @@ async fn analyze_pdf(input: &Path, _output: &Path) -> Result<()> {
         bail!("pdfinfo failed: {}", stderr);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pdfa_version;
+
+    #[test]
+    fn pdfa_versions_are_case_insensitive() {
+        assert_eq!(pdfa_version(&Some("1B".into())), "1");
+        assert_eq!(pdfa_version(&Some("2b".into())), "2");
+        assert_eq!(pdfa_version(&Some("3B".into())), "3");
+        assert_eq!(pdfa_version(&Some("4".into())), "4");
+        assert_eq!(pdfa_version(&None), "2");
+    }
 }

@@ -131,9 +131,10 @@ presets:
   vp9_vaapi:
     codec: vp9_vaapi
     quality: qp 28
-    audio_codec: copy
+    audio_codec: libopus
+    audio_bitrate: 128k
     output_ext: .webm
-    description: "vp9_vaapi VP9 — qp 28, copy audio, .webm — web streaming via GPU"
+    description: "vp9_vaapi VP9 — qp 28, libopus 128k, .webm — web streaming via GPU"
 
   av1_vaapi:
     codec: av1_vaapi
@@ -218,9 +219,10 @@ presets:
   vp9_qsv:
     codec: vp9_qsv
     quality: qp 28
-    audio_codec: copy
+    audio_codec: libopus
+    audio_bitrate: 128k
     output_ext: .webm
-    description: "vp9_qsv VP9 — qp 28, copy audio, .webm — Intel QuickSync"
+    description: "vp9_qsv VP9 — qp 28, libopus 128k, .webm — Intel QuickSync"
 
   av1_qsv:
     codec: av1_qsv
@@ -232,25 +234,18 @@ presets:
   # ── VideoToolbox (macOS) ──
   h264_videotoolbox:
     codec: h264_videotoolbox
-    quality: constant_bit_rate 3000
+    quality: constant_bit_rate 3000k
     audio_codec: copy
     output_ext: .mp4
-    description: "h264_videotoolbox H.264/AVC — b:v 3000, copy audio, .mp4 — macOS VideoToolbox"
+    description: "h264_videotoolbox H.264/AVC — b:v 3000k, copy audio, .mp4 — macOS VideoToolbox"
 
   hevc_videotoolbox:
     codec: hevc_videotoolbox
-    quality: constant_bit_rate 5000
+    quality: constant_bit_rate 5000k
     audio_codec: copy
     output_ext: .mp4
-    description: "hevc_videotoolbox H.265/HEVC — b:v 5000, copy audio, .mp4 — macOS VideoToolbox"
+    description: "hevc_videotoolbox H.265/HEVC — b:v 5000k, copy audio, .mp4 — macOS VideoToolbox"
 
-  # ── OMX (Raspberry Pi) ──
-  h264_omx:
-    codec: h264_omx
-    quality: qp 25
-    audio_codec: copy
-    output_ext: .mp4
-    description: "h264_omx H.264/AVC — qp 25, copy audio, .mp4 — Raspberry Pi OMX (legacy; OMX removed in FFmpeg 6.x+, prefer h264_v4l2m2m)"
 
   # ── RKMPP (Rockchip MPP — RK3588, NanoPi R6S, etc.) ──
   h264_rkmpp:
@@ -420,6 +415,7 @@ presets:
   png:
     output_ext: .png
     quality: 90
+    transparent: true
     description: "PNG — lossless, supports transparency"
 
   jpeg_90:
@@ -440,35 +436,42 @@ presets:
   webp_90:
     output_ext: .webp
     quality: 90
+    transparent: true
     description: "WebP 90% — modern web format"
 
   webp_80:
     output_ext: .webp
     quality: 80
+    transparent: true
     description: "WebP 80% — balanced"
 
   webp_lossless:
     output_ext: .webp
     quality: 100
+    transparent: true
     description: "WebP lossless"
 
   avif_90:
     output_ext: .avif
     quality: 90
+    transparent: true
     description: "AVIF 90% — next-gen format, best compression"
 
   avif_80:
     output_ext: .avif
     quality: 80
+    transparent: true
     description: "AVIF 80% — balanced"
 
   heif:
     output_ext: .heic
     quality: 90
+    transparent: true
     description: "HEIF/HEIC — Apple format"
 
   tiff:
     output_ext: .tiff
+    transparent: true
     description: "TIFF — uncompressed, archival"
 
   gif:
