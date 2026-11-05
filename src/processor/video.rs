@@ -11,6 +11,7 @@ use crate::utils::path::get_base_name;
 
 use super::disk::check_disk_space;
 use super::namer::OutputNamer;
+use super::progress::{probe_duration, run_ffmpeg_with_progress, ProgressReporter};
 #[allow(clippy::too_many_arguments)]
 pub async fn process_video(
     watcher_name: String,
@@ -83,6 +84,14 @@ pub async fn process_video(
 
     let input_path = file_path.clone();
     let output_path_for_cleanup = output_path.clone();
+    let reporter = ProgressReporter::new(
+        deps.health_server.clone(),
+        watcher_name.clone(),
+        file_name.clone(),
+    );
+    let ffmpeg_path = ffmpeg_path.to_string();
+    let ffprobe_path = ffprobe_path.to_string();
+    let rule_clone = rule.clone();
     super::runner::run_conversion(
         deps,
         watcher_name,
@@ -91,8 +100,16 @@ pub async fn process_video(
         &output_path_for_cleanup,
         input_file_action,
         "video",
-        || async move {
-            convert_video(&input_path, &output_path, rule, ffmpeg_path, ffprobe_path).await?;
+        move || async move {
+            convert_video(
+                &input_path,
+                &output_path,
+                &rule_clone,
+                &ffmpeg_path,
+                &ffprobe_path,
+                &reporter,
+            )
+            .await?;
             Ok(output_path.to_string_lossy().to_string())
         },
     )
@@ -137,6 +154,7 @@ async fn convert_video(
     rule: &VideoRule,
     ffmpeg_path: &str,
     ffprobe_path: &str,
+    reporter: &ProgressReporter,
 ) -> Result<()> {
     let codec = rule.codec.as_deref().unwrap_or("libx264");
     let quality = rule
@@ -150,6 +168,16 @@ async fn convert_video(
     };
 
     let (hwaccel_pre, hwaccel_post) = build_hwaccel_args(codec);
+
+    // Duração do input via ffprobe ANTES do ffmpeg (necessária para percentual/ETA).
+    // Sem duração, o percentual/ETA ficam ausentes (UI indeterminada).
+    let duration_s = probe_duration(ffprobe_path, input).await.unwrap_or(None);
+    if let Some(d) = duration_s {
+        reporter.set_duration(d);
+    }
+
+    // `codec: copy` não produz progresso (rápido); não injetamos flags de progresso.
+    let is_copy = codec == "copy";
 
     let mut cmd = Command::new(ffmpeg_path);
     cmd.kill_on_drop(true);
@@ -177,11 +205,18 @@ async fn convert_video(
         cmd.arg("-b:a")
             .arg(rule.audio_bitrate.as_deref().unwrap_or("128k"));
     }
+
+    // Apenas codecs de codificação real emitem `-progress pipe:1`. `copy` não
+    // gera progresso (é rápido), então evitamos flags desnecessárias.
+    if !is_copy {
+        cmd.arg("-progress").arg("pipe:1").arg("-nostats");
+    }
+
     cmd.arg(output.as_os_str())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let output_result = cmd.output().await?;
+    let output_result = run_ffmpeg_with_progress(&mut cmd, reporter).await?;
 
     if !output_result.status.success() {
         let stderr = String::from_utf8_lossy(&output_result.stderr);

@@ -9,6 +9,7 @@ use std::os::unix::fs::OpenOptionsExt;
 
 use anyhow::Result;
 use log::{error, info};
+use serde::Serialize;
 use subtle::ConstantTimeEq;
 
 use crate::config::watch::{WatchConfig, WatchType};
@@ -27,6 +28,8 @@ pub struct HealthServer {
     watchers: Arc<Mutex<Vec<WatcherInfo>>>,
     queue: Arc<Mutex<HashMap<String, Vec<String>>>>,
     processing: Arc<Mutex<HashMap<String, HashSet<String>>>>,
+    progress: Arc<Mutex<HashMap<String, HashMap<String, ProgressInfo>>>>,
+    ffmpeg_logs: Arc<Mutex<FfmpegLogs>>,
     history: Arc<Mutex<Vec<ConversionRecord>>>,
     processed: Arc<AtomicU64>,
     errors: Arc<AtomicU64>,
@@ -55,6 +58,17 @@ pub struct WatcherInfo {
     pub custom_rules: Vec<String>,
 }
 
+type FfmpegLogs = HashMap<String, HashMap<String, Vec<String>>>;
+
+/// Snapshot do progresso de um job (watcher, file), exposto em /api/queue.
+#[derive(Debug, Clone, Serialize)]
+pub struct ProgressInfo {
+    pub percent: Option<f64>,
+    pub out_time: Option<f64>,
+    pub speed: Option<f64>,
+    pub eta: Option<f64>,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ConversionRecord {
     pub time: String,
@@ -80,6 +94,8 @@ impl HealthServer {
             watchers: Arc::new(Mutex::new(Vec::new())),
             queue: Arc::new(Mutex::new(HashMap::new())),
             processing: Arc::new(Mutex::new(HashMap::new())),
+            progress: Arc::new(Mutex::new(HashMap::new())),
+            ffmpeg_logs: Arc::new(Mutex::new(HashMap::new())),
             history: Arc::new(Mutex::new(Vec::new())),
             processed: Arc::new(AtomicU64::new(0)),
             errors: Arc::new(AtomicU64::new(0)),
@@ -173,7 +189,66 @@ impl HealthServer {
     }
 
     pub fn clear_processing(&self, watcher: &str, file: &str) -> Result<()> {
+        let _ = self.clear_progress(watcher, file);
+        let _ = self.clear_ffmpeg_logs(watcher, file);
         let mut map = self.processing.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(files) = map.get_mut(watcher) {
+            files.remove(file);
+            if files.is_empty() {
+                map.remove(watcher);
+            }
+        }
+        Ok(())
+    }
+
+    /// Atualiza (ou cria) o snapshot de progresso de um job. `percent` ausente
+    /// indica que o health server deve renderizar indeterminado.
+    pub fn set_progress(&self, watcher: &str, file: &str, info: ProgressInfo) -> Result<()> {
+        let mut map = self.progress.lock().unwrap_or_else(|p| p.into_inner());
+        let entry = map.entry(watcher.to_string()).or_default();
+        entry.insert(file.to_string(), info);
+        Ok(())
+    }
+
+    /// Remove o progresso de um job (sucesso/erro/timeout/abort).
+    pub fn clear_progress(&self, watcher: &str, file: &str) -> Result<()> {
+        let mut map = self.progress.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(files) = map.get_mut(watcher) {
+            files.remove(file);
+            if files.is_empty() {
+                map.remove(watcher);
+            }
+        }
+        Ok(())
+    }
+
+    /// Acumula uma linha de log FFmpeg com prefixo para um job (watcher, file).
+    /// Mantém o buffer limitado a `FFMPEG_LOG_MAX_LINES` / `FFMPEG_LOG_MAX_BYTES`,
+    /// descartando as linhas mais antigas.
+    pub fn push_ffmpeg_log(&self, watcher: &str, file: &str, line: &str) -> Result<()> {
+        const MAX_LINES: usize = 200;
+        const MAX_BYTES: usize = 64 * 1024;
+        let mut map = self.ffmpeg_logs.lock().unwrap_or_else(|p| p.into_inner());
+        let entry = map
+            .entry(watcher.to_string())
+            .or_default()
+            .entry(file.to_string())
+            .or_default();
+        entry.push(line.to_string());
+        while entry.len() > MAX_LINES {
+            entry.remove(0);
+        }
+        let mut total_bytes: usize = entry.iter().map(|l| l.len()).sum();
+        while total_bytes > MAX_BYTES && !entry.is_empty() {
+            let removed = entry.remove(0);
+            total_bytes -= removed.len();
+        }
+        Ok(())
+    }
+
+    /// Limpa os logs FFmpeg de um job (chamado ao terminar).
+    pub fn clear_ffmpeg_logs(&self, watcher: &str, file: &str) -> Result<()> {
+        let mut map = self.ffmpeg_logs.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(files) = map.get_mut(watcher) {
             files.remove(file);
             if files.is_empty() {
@@ -356,10 +431,20 @@ impl HealthServer {
                 (tiny_http::Method::Get, "/api/queue") => {
                     let queue = self.queue.lock().unwrap_or_else(|p| p.into_inner());
                     let processing = self.processing.lock().unwrap_or_else(|p| p.into_inner());
+                    let progress = self.progress.lock().unwrap_or_else(|p| p.into_inner());
                     let response = serde_json::json!({
                         "queue": &*queue,
                         "processing": &*processing,
+                        "progress": &*progress,
                     });
+                    let body = serde_json::to_string_pretty(&response).unwrap_or_default();
+                    let _ = request.respond(
+                        tiny_http::Response::from_string(body).with_header(json_ct.clone()),
+                    );
+                }
+                (tiny_http::Method::Get, "/api/ffmpeg") => {
+                    let logs = self.ffmpeg_logs.lock().unwrap_or_else(|p| p.into_inner());
+                    let response = serde_json::json!({ "jobs": &*logs });
                     let body = serde_json::to_string_pretty(&response).unwrap_or_default();
                     let _ = request.respond(
                         tiny_http::Response::from_string(body).with_header(json_ct.clone()),

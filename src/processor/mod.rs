@@ -7,6 +7,7 @@ pub mod image;
 pub mod job;
 pub mod namer;
 pub mod pdf;
+pub mod progress;
 pub mod runner;
 pub mod video;
 
