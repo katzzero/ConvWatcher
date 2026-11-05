@@ -157,7 +157,10 @@ fn build_image_args(input: &Path, output: &Path, rule: &ImageRule) -> Vec<String
     // doesn't exist — -y handles both cases safely).
     args.push("-y".to_string());
 
-    // Transparency control via pixel format filter.
+    args.push("-i".to_string());
+    args.push(input.to_string_lossy().to_string());
+
+    // `-vf` is an output option; it must come after `-i`.
     match rule.transparent {
         Some(true) => {
             args.push("-vf".to_string());
@@ -169,9 +172,6 @@ fn build_image_args(input: &Path, output: &Path, rule: &ImageRule) -> Vec<String
         }
         None => {} // let ffmpeg auto-negotiate pixel format
     }
-
-    args.push("-i".to_string());
-    args.push(input.to_string_lossy().to_string());
 
     // JPEG quality mapping (only meaningful for JPEG output).
     let ext = rule.output_ext.as_deref().unwrap_or(".png");
@@ -288,10 +288,10 @@ mod tests {
             args,
             vec![
                 "-y",
-                "-vf",
-                "format=rgba",
                 "-i",
                 "/tmp/input.png",
+                "-vf",
+                "format=rgba",
                 "/tmp/output.png"
             ]
         );
@@ -315,10 +315,10 @@ mod tests {
             args,
             vec![
                 "-y",
-                "-vf",
-                "format=rgb24",
                 "-i",
                 "/tmp/input.webp",
+                "-vf",
+                "format=rgb24",
                 "/tmp/output.png"
             ]
         );
@@ -343,10 +343,10 @@ mod tests {
             args,
             vec![
                 "-y",
-                "-vf",
-                "format=rgb24",
                 "-i",
                 "/tmp/input.bmp",
+                "-vf",
+                "format=rgb24",
                 "-qscale:v",
                 "7",
                 "/tmp/output.jpeg"
