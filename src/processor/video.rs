@@ -99,6 +99,38 @@ pub async fn process_video(
     .await;
 }
 
+/// Explain the common "encoder/option not available" failure so the dashboard
+/// history tells the operator what to change instead of only ffmpeg's stderr.
+fn hardware_error_hint(codec: &str, stderr: &str) -> Option<&'static str> {
+    let unsupported = stderr.contains("Unrecognized option")
+        || stderr.contains("Unknown encoder")
+        || stderr.contains("Cannot load")
+        || stderr.contains("not found");
+    if !unsupported {
+        return None;
+    }
+    if codec.contains("nvenc") {
+        Some(
+            "NVIDIA NVENC is not available on this host. Use a CPU preset (e.g. libx264/libx265) \
+             or move the file out of ->gpu/ to a folder whose rule does not require NVENC.",
+        )
+    } else if codec.contains("vaapi") {
+        Some(
+            "VAAPI hardware encoding is not available. Use a CPU preset or check /dev/dri \
+             and the ffmpeg build's VAAPI support.",
+        )
+    } else if codec.contains("qsv") {
+        Some("Intel QSV is not available. Use a CPU preset or check the ffmpeg build/hardware.")
+    } else if codec.contains("v4l2m2m") {
+        Some(
+            "The V4L2 hardware encoder is not available. Use a CPU preset or check the device \
+             and ffmpeg build.",
+        )
+    } else {
+        None
+    }
+}
+
 async fn convert_video(
     input: &Path,
     output: &Path,
@@ -146,7 +178,11 @@ async fn convert_video(
 
     if !output_result.status.success() {
         let stderr = String::from_utf8_lossy(&output_result.stderr);
-        bail!("FFmpeg failed: {}", stderr);
+        let hint = hardware_error_hint(codec, &stderr);
+        match hint {
+            Some(hint) => bail!("FFmpeg failed: {}\n\nHint: {}", stderr, hint),
+            None => bail!("FFmpeg failed: {}", stderr),
+        }
     }
 
     if rule.check_duration.unwrap_or(true) {
