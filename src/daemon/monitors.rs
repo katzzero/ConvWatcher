@@ -146,8 +146,8 @@ pub async fn monitor_manager(
                     != current_global.healthcheck.http_port
                     || previous_global.healthcheck.bind_address
                         != current_global.healthcheck.bind_address
-                    || previous_global.healthcheck.auth_token
-                        != current_global.healthcheck.auth_token
+                    || previous_global.healthcheck.auth_password
+                        != current_global.healthcheck.auth_password
                 {
                     warn!("hot-reload: healthcheck settings changed; restart required for the health server");
                 }

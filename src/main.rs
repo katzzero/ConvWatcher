@@ -133,7 +133,7 @@ async fn run() -> Result<()> {
             global_config.history.persistent,
         )
         .with_app_log(global_config.log.app_log_file.clone())
-        .with_auth_token(global_config.healthcheck.auth_token.clone()),
+        .with_auth_password(global_config.healthcheck.auth_password.clone()),
     );
 
     for cfg in &watch_configs {

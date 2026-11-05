@@ -336,10 +336,11 @@ pub struct HealthcheckConfig {
     pub http_port: u16,
     #[serde(default = "default_bind_address")]
     pub bind_address: String,
-    /// Optional bearer token for dashboard/API/logs. `/health` stays open for
-    /// container healthchecks. Empty/None disables authentication.
-    #[serde(default)]
-    pub auth_token: Option<String>,
+    /// Dashboard password. Sent internally as `Authorization: Bearer <senha>`.
+    /// `/health` stays open for container healthchecks. Empty/None disables
+    /// authentication. Accepts legacy key `auth_token` for 0.9.9 compatibility.
+    #[serde(default, alias = "auth_token")]
+    pub auth_password: Option<String>,
 }
 
 fn default_http_port() -> u16 {
@@ -354,7 +355,7 @@ impl Default for HealthcheckConfig {
         Self {
             http_port: default_http_port(),
             bind_address: default_bind_address(),
-            auth_token: None,
+            auth_password: None,
         }
     }
 }

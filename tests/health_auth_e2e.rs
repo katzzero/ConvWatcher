@@ -1,11 +1,12 @@
 //! End-to-end test for dashboard auth.
 //!
-//! Spawns a real `convwatcher` subprocess with `healthcheck.auth_token` set and
+//! Spawns a real `convwatcher` subprocess with `healthcheck.auth_password` set and
 //! verifies:
-//!   - `/health` returns 200 without a token (container healthcheck stays open)
-//!   - `/api/watchers` returns 401 without a token
-//!   - `/api/watchers` returns 200 with `Authorization: Bearer testtoken`
+//!   - `/health` returns 200 without a password (container healthcheck stays open)
+//!   - `/api/watchers` returns 401 without a password
+//!   - `/api/watchers` returns 200 with `Authorization: Bearer testpassword`
 //!   - `/health` body contains `version`
+//!   - `/logs/errors` returns 200 (empty) with password
 //!
 //! Uses `curl`. Skips gracefully if `curl` is unavailable locally; in CI the
 //! convwatcher binary is required (panic if missing).
@@ -171,7 +172,7 @@ fn health_auth_requires_bearer_token() {
   healthcheck:
     http_port: {}
     bind_address: 127.0.0.1
-    auth_token: "testtoken"
+    auth_password: "testpassword"
 
   disk_space:
     check_interval: 60s
@@ -218,14 +219,14 @@ watchers:
     );
     assert!(up, "health server did not start on {} within timeout", base);
 
-    // /health and the static dashboard are open without a token.
+    // /health and the static dashboard are open without a password.
     let code = curl_code(&format!("{}/health", base), &[]).unwrap_or_default();
-    assert_eq!(code, "200", "/health should return 200 without token");
+    assert_eq!(code, "200", "/health should return 200 without password");
 
     let dashboard_code = curl_code(&format!("{}/dashboard", base), &[]).unwrap_or_default();
     assert_eq!(
         dashboard_code, "200",
-        "/dashboard must load without a token so the user can enter one"
+        "/dashboard must load without a password so the user can enter one"
     );
 
     let body = curl_body(&format!("{}/health", base), &[]).unwrap_or_default();
@@ -235,30 +236,30 @@ watchers:
         body
     );
 
-    // /api/watchers requires auth: 401 without token.
+    // /api/watchers requires auth: 401 without password.
     let code_no_token = curl_code(&format!("{}/api/watchers", base), &[]).unwrap_or_default();
     assert_eq!(
         code_no_token, "401",
-        "/api/watchers should return 401 without token, got {}",
+        "/api/watchers should return 401 without password, got {}",
         code_no_token
     );
 
-    // /api/watchers returns 200 with Bearer token.
+    // /api/watchers returns 200 with Bearer password.
     let code_with_token = curl_code(
         &format!("{}/api/watchers", base),
-        &["-H", "Authorization: Bearer testtoken"],
+        &["-H", "Authorization: Bearer testpassword"],
     )
     .unwrap_or_default();
     assert_eq!(
         code_with_token, "200",
-        "/api/watchers should return 200 with Bearer token, got {}",
+        "/api/watchers should return 200 with Bearer password, got {}",
         code_with_token
     );
 
     // A missing error log must be an empty 200, not a 500 (dashboard U6).
     let empty_log_code = curl_code(
         &format!("{}/logs/errors", base),
-        &["-H", "Authorization: Bearer testtoken"],
+        &["-H", "Authorization: Bearer testpassword"],
     )
     .unwrap_or_default();
     assert_eq!(

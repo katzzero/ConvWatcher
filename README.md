@@ -443,7 +443,7 @@ http://localhost:8080/dashboard
 
 ### Dashboard auth / UX
 
-- **Bearer token**: when `global.healthcheck.auth_token` is set, the dashboard stores the token in `sessionStorage` (never in the URL, never in `localStorage`, never logged) and sends `Authorization: Bearer <token>` on every API/fetch call. A token bar (password input + Set/Clear) appears automatically on 401 with an “Unauthorized — set token” banner. `/health` stays open without a token for container healthchecks.
+- **Dashboard password**: when `global.healthcheck.auth_password` is set, the dashboard stores the password in `sessionStorage` (never in the URL, never in `localStorage`, never logged) and sends `Authorization: Bearer <senha>` on every API/fetch call. A password bar (password input + Enter/Clear) appears automatically on 401 with an “Unauthorized — enter password” banner. `/health` stays open without a password for container healthchecks. The legacy key `auth_token` is still accepted (0.9.9 compatibility).
 - **Watcher name (U1)**: watcher cards show `w.name` as title (falling back to `watch_folder`) with `watch_folder` and `output_folder` as details.
 - **Logs (U6)**: “App log” / “Error log” selector (`/logs` or `/logs/errors`), selection persisted in `sessionStorage`, rendered as plain text.
 - **Refresh control (U7)**: 5s / 10s / 30s / Off selector plus “Refresh now”. Uses a rescheduled `setTimeout` (not a fixed `setInterval`); Off pauses for real. Preference persisted in `localStorage`.
@@ -451,7 +451,7 @@ http://localhost:8080/dashboard
 - **Responsiveness (U12)**: history table in an `overflow-x:auto` wrapper; header with `flex-wrap`; adjusted padding/font on small screens.
 - **Accessibility (U14)**: `:focus-visible` on buttons/selects/inputs, `aria-label` on controls, `aria-live="polite"` on stats/alerts, and history status shown as text (not only color).
 - **Version (U17)**: `/health` includes `"version"` and the header shows “ConvWatcher Dashboard vX.Y.Z”.
-- **Safe bind**: the server binds to `127.0.0.1` by default. If you expose `0.0.0.0`, set `auth_token` or keep the port firewalled.
+- **Safe bind**: the server binds to `127.0.0.1` by default. If you expose `0.0.0.0`, set `auth_password` or keep the port firewalled.
 
 ---
 
@@ -527,7 +527,7 @@ cross build --release --target aarch64-unknown-linux-musl
 ## Security / Hardenings
 
 - **Docker non-root**: the image runs as user `cw` (created with `useradd -r -s /bin/false --no-create-home`), no home directory, and the entrypoint runs under that user.
-- **Health server bind/auth**: the HTTP health/dashboard server binds to `127.0.0.1` by default. Optional bearer auth is available via `global.healthcheck.auth_token` (`Authorization: Bearer <token>`); `/health` stays open for container healthchecks. If you bind `0.0.0.0`, set a token or keep the port firewalled.
+- **Health server bind/auth**: the HTTP health/dashboard server binds to `127.0.0.1` by default. Optional auth is available via `global.healthcheck.auth_password` (`Authorization: Bearer <senha>`); `/health` stays open for container healthchecks. If you bind `0.0.0.0`, set a password or keep the port firewalled.
 - **embedded_secret**: required for per-watcher overrides promoted from a watch folder; when empty, those overrides are rejected (`.invalid` marker). Manual admin overrides placed in `config/watchs/` are still honored.
 - **`config/watchs/` is admin-only**: override files are validated (secret via constant-time compare, type matching) before promotion. Treat the directory as admin-controlled.
 - **ImageMagick removed**: ImageMagick is no longer in the conversion allowlist (removed from the Docker toolchain and processors). Do not re-add it.

@@ -8,16 +8,24 @@
 fn dashboard_contains_auth_and_ux_features() {
     let html = include_str!("../src/health/dashboard.html");
 
-    // Auth: fetchJson/fetchText send Authorization; token kept in sessionStorage.
+    // Auth: fetchJson/fetchText send Authorization; password kept in sessionStorage.
     assert!(
         html.contains("Authorization"),
         "missing Authorization header"
     );
     assert!(
         html.contains("sessionStorage"),
-        "missing sessionStorage token storage"
+        "missing sessionStorage password storage"
     );
-    assert!(html.contains("Bearer"), "missing Bearer token construction");
+    assert!(html.contains("Bearer"), "missing Bearer construction");
+    assert!(
+        html.contains("cw_auth_password"),
+        "missing cw_auth_password sessionStorage key"
+    );
+    assert!(
+        html.contains("Password"),
+        "missing Password label/placeholder/button"
+    );
 
     // Accessibility: aria-live alerts/stats and focus-visible styles.
     assert!(html.contains("aria-live"), "missing aria-live");

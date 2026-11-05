@@ -147,16 +147,16 @@ button:focus-visible, select:focus-visible, input:focus-visible {
 <div class="header">
   <h1>ConvWatcher Dashboard <span class="version" id="headerVersion"></span></h1>
   <div style="display:flex; gap:8px;">
-    <button type="button" id="showAuthBtn" aria-label="Show auth token bar">Token</button>
+    <button type="button" id="showAuthBtn" aria-label="Show password bar">Password</button>
     <button onclick="toggleTheme()" id="themeBtn" aria-label="Toggle theme">Light</button>
   </div>
 </div>
 
 <div class="auth-bar" id="authBar">
-  <label for="authToken" style="font-size:0.85rem; color:var(--text-dim);">Auth token</label>
-  <input type="password" id="authToken" placeholder="Bearer token" aria-label="Auth token (sessionStorage)" autocomplete="off">
-  <button type="button" class="set" id="setToken" aria-label="Set auth token">Set</button>
-  <button type="button" class="clear" id="clearToken" aria-label="Clear auth token">Clear</button>
+  <label for="authPassword" style="font-size:0.85rem; color:var(--text-dim);">Password</label>
+  <input type="password" id="authPassword" placeholder="Password" aria-label="Dashboard password (sessionStorage)" autocomplete="off">
+  <button type="button" class="set" id="setToken" aria-label="Set dashboard password">Enter</button>
+  <button type="button" class="clear" id="clearToken" aria-label="Clear dashboard password">Clear</button>
 </div>
 
 <div class="alert" id="errorAlert" role="alert" aria-live="polite">
@@ -229,13 +229,13 @@ function escapeHtml(s) {
 }
 
 function getToken() {
-  try { return sessionStorage.getItem('cw_auth_token') || ''; } catch (e) { return ''; }
+  try { return sessionStorage.getItem('cw_auth_password') || ''; } catch (e) { return ''; }
 }
 function setToken(v) {
-  try { sessionStorage.setItem('cw_auth_token', v); } catch (e) {}
+  try { sessionStorage.setItem('cw_auth_password', v); } catch (e) {}
 }
 function clearToken() {
-  try { sessionStorage.removeItem('cw_auth_token'); } catch (e) {}
+  try { sessionStorage.removeItem('cw_auth_password'); } catch (e) {}
 }
 
 function authHeaders() {
@@ -339,11 +339,11 @@ function stopRefresh() {
 document.getElementById('showAuthBtn').addEventListener('click', showTokenBar);
 document.getElementById('retryBtn').addEventListener('click', scheduleAndRun);
 document.getElementById('setToken').addEventListener('click', () => {
-  const input = document.getElementById('authToken');
+  const input = document.getElementById('authPassword');
   const v = (input && input.value) ? input.value.trim() : '';
-  if (!v) { showAlert('Enter a token.'); return; }
+  if (!v) { showAlert('Enter a password.'); return; }
   setToken(v);
-  document.getElementById('authToken').value = '';
+  document.getElementById('authPassword').value = '';
   hideTokenBar();
   hideAlert();
   hideSectionError();
@@ -351,12 +351,12 @@ document.getElementById('setToken').addEventListener('click', () => {
 });
 document.getElementById('clearToken').addEventListener('click', () => {
   clearToken();
-  document.getElementById('authToken').value = '';
+  document.getElementById('authPassword').value = '';
   hideAlert();
   hideSectionError();
   scheduleAndRun();
 });
-document.getElementById('authToken').addEventListener('keypress', (e) => {
+document.getElementById('authPassword').addEventListener('keypress', (e) => {
   if (e.key === 'Enter') document.getElementById('setToken').click();
 });
 
@@ -476,9 +476,9 @@ function handleFetchError(e, section) {
   const msg = String(e);
   stopRefresh();
   if (msg === 'UNAUTHORIZED') {
-    showAlert('Unauthorized — set token');
+    showAlert('Unauthorized — enter password');
     showTokenBar();
-    showSectionError('Unauthorized — set a Bearer token in sessionStorage.');
+    showSectionError('Unauthorized — enter the dashboard password.');
     return;
   }
   showAlert('Failed to load ' + section + ': ' + msg);

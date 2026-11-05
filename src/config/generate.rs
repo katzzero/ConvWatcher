@@ -277,11 +277,12 @@ global:
     # Default: "127.0.0.1"
     bind_address: 127.0.0.1
 
-    # Token opcional (Authorization: Bearer <token>) para dashboard, APIs e logs.
-    # /health permanece aberto para o HEALTHCHECK do container.
-    # Vazio/ausente = sem autenticação.
+    # Senha do dashboard. Enviada internamente como Authorization: Bearer <senha>
+    # nas chamadas de API/logs. /health permanece aberto para o HEALTHCHECK do
+    # container. Vazio/ausente = sem autenticação.
+    # Aceita a chave antiga auth_token (compatibilidade 0.9.9).
     # Default: "" (desabilitado)
-    auth_token: ""
+    auth_password: ""
 
   disk_space:
     # Intervalo entre verificações de espaço em disco.

@@ -38,7 +38,7 @@ pub struct HealthServer {
     history_file: Option<String>,
     history_persistent: bool,
     max_records: usize,
-    auth_token: Option<String>,
+    auth_password: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -89,7 +89,7 @@ impl HealthServer {
             history_file: None,
             history_persistent: false,
             max_records,
-            auth_token: None,
+            auth_password: None,
         }
     }
 
@@ -108,18 +108,18 @@ impl HealthServer {
         self
     }
 
-    pub fn with_auth_token(mut self, token: Option<String>) -> Self {
-        self.auth_token = token.filter(|t| !t.is_empty());
+    pub fn with_auth_password(mut self, token: Option<String>) -> Self {
+        self.auth_password = token.filter(|t| !t.is_empty());
         self
     }
 
     fn authorized(&self, request: &tiny_http::Request, path: &str) -> bool {
-        let token = match self.auth_token.as_deref() {
+        let token = match self.auth_password.as_deref() {
             Some(token) => token,
             None => return true,
         };
         // The static dashboard and the container healthcheck must load without
-        // credentials; the dashboard then asks for a token for the API calls.
+        // credentials; the dashboard then asks for a password for the API calls.
         if matches!(path, "/health" | "/" | "/dashboard") {
             return true;
         }
