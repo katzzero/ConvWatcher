@@ -441,6 +441,18 @@ http://localhost:8080/dashboard
 | GET | `/logs` | Latest 100 log lines |
 | GET | `/logs/errors` | Latest error log lines |
 
+### Dashboard auth / UX
+
+- **Bearer token**: when `global.healthcheck.auth_token` is set, the dashboard stores the token in `sessionStorage` (never in the URL, never in `localStorage`, never logged) and sends `Authorization: Bearer <token>` on every API/fetch call. A token bar (password input + Set/Clear) appears automatically on 401 with an “Unauthorized — set token” banner. `/health` stays open without a token for container healthchecks.
+- **Watcher name (U1)**: watcher cards show `w.name` as title (falling back to `watch_folder`) with `watch_folder` and `output_folder` as details.
+- **Logs (U6)**: “App log” / “Error log” selector (`/logs` or `/logs/errors`), selection persisted in `sessionStorage`, rendered as plain text.
+- **Refresh control (U7)**: 5s / 10s / 30s / Off selector plus “Refresh now”. Uses a rescheduled `setTimeout` (not a fixed `setInterval`); Off pauses for real. Preference persisted in `localStorage`.
+- **Visible errors (U8)**: fetch failures are not swallowed. A banner with `role="alert"` / `aria-live`, per-section error messages, and a Retry button; 401 triggers the token flow, network/5xx show the error.
+- **Responsiveness (U12)**: history table in an `overflow-x:auto` wrapper; header with `flex-wrap`; adjusted padding/font on small screens.
+- **Accessibility (U14)**: `:focus-visible` on buttons/selects/inputs, `aria-label` on controls, `aria-live="polite"` on stats/alerts, and history status shown as text (not only color).
+- **Version (U17)**: `/health` includes `"version"` and the header shows “ConvWatcher Dashboard vX.Y.Z”.
+- **Safe bind**: the server binds to `127.0.0.1` by default. If you expose `0.0.0.0`, set `auth_token` or keep the port firewalled.
+
 ---
 
 ## Key Features

@@ -118,8 +118,9 @@ impl HealthServer {
             Some(token) => token,
             None => return true,
         };
-        // Container healthchecks must keep working without credentials.
-        if path == "/health" {
+        // The static dashboard and the container healthcheck must load without
+        // credentials; the dashboard then asks for a token for the API calls.
+        if matches!(path, "/health" | "/" | "/dashboard") {
             return true;
         }
         let provided = request
@@ -324,6 +325,7 @@ impl HealthServer {
                     let processing_count: usize = processing.values().map(|s| s.len()).sum();
                     let response = serde_json::json!({
                         "status": "ok",
+                        "version": env!("CARGO_PKG_VERSION"),
                         "uptime": uptime_str,
                         "watchers": watchers.len(),
                         "queue": queue_count,

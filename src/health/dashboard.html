@@ -35,13 +35,39 @@ body {
 .header {
   display: flex; justify-content: space-between; align-items: center;
   margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid var(--border);
+  flex-wrap: wrap; gap: 12px;
 }
-.header h1 { font-size: 1.5rem; }
+.header h1 { font-size: 1.35rem; }
+.header .version { margin-left: 8px; font-size: 0.85rem; color: var(--text-dim); }
 .header button {
   background: var(--card-bg); color: var(--text); border: 1px solid var(--border);
   padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 0.875rem;
 }
 .header button:hover { background: var(--border); }
+.auth-bar {
+  display: none; align-items: center; gap: 8px; margin-bottom: 16px; padding: 10px 12px;
+  background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px;
+  flex-wrap: wrap;
+}
+.auth-bar input[type=password] {
+  background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 4px; padding: 6px 8px; font-size: 0.875rem; min-width: 160px;
+}
+.auth-bar button.set { background: var(--accent); color: #fff; border: none; }
+.auth-bar button.set:hover { opacity: 0.9; }
+.auth-bar button.clear { background: transparent; color: var(--text-dim); border: 1px solid var(--border); }
+.auth-bar button.clear:hover { background: var(--border); }
+.alert {
+  display: none; align-items: start; gap: 10px; margin-bottom: 16px; padding: 10px 12px;
+  background: #7a1f1f; border: 1px solid var(--red); border-radius: 8px; color: #fff;
+}
+.alert .msg { font-size: 0.9rem; line-height: 1.4; }
+.alert button.retry {
+  margin-top: 8px; background: var(--accent); color: #fff; border: none;
+  border-radius: 4px; padding: 4px 10px; cursor: pointer; font-size: 0.85rem;
+}
+.alert button.retry:hover { opacity: 0.9; }
+.section-error { color: var(--red); font-size: 0.85rem; margin-bottom: 8px; display:none; }
 .stats {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 12px; margin-bottom: 24px;
@@ -59,13 +85,15 @@ body {
 .section h2 {
   font-size: 1.1rem; margin-bottom: 12px; padding-bottom: 8px;
   border-bottom: 1px solid var(--border);
+  display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;
 }
 .card {
   background: var(--card-bg); border: 1px solid var(--border);
   border-radius: 8px; padding: 16px; margin-bottom: 12px;
 }
-.card .title { font-weight: 600; margin-bottom: 8px; }
+.card .title { font-weight: 600; margin-bottom: 6px; }
 .card .detail { font-size: 0.85rem; color: var(--text-dim); }
+.card .name { font-weight: 600; }
 .rules { font-size: 0.8rem; margin-top: 8px; }
 .rules span {
   display: inline-block; background: var(--border); color: var(--text);
@@ -76,22 +104,69 @@ th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--bor
 th { color: var(--text-dim); font-weight: 500; }
 .status-done { color: var(--green); }
 .status-error { color: var(--red); }
+.status-text::before { content: attr(data-label) ": "; }
+.log-selector {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap;
+}
+.log-selector select, .log-selector button {
+  background: var(--card-bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 6px 10px; font-size: 0.875rem; cursor: pointer;
+}
 .log-viewer {
   background: #0d1117; color: #58a6ff; border: 1px solid var(--border);
   border-radius: 8px; padding: 12px; font-family: 'SF Mono', 'Fira Mono', monospace;
   font-size: 0.8rem; max-height: 300px; overflow-y: auto; white-space: pre-wrap;
   line-height: 1.5;
 }
+.refresh-controls {
+  display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap;
+}
+.refresh-controls select, .refresh-controls button {
+  background: var(--card-bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 6px 10px; font-size: 0.875rem; cursor: pointer;
+}
 .refresh-info { font-size: 0.75rem; color: var(--text-dim); margin-top: 4px; }
+.history-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; }
+@media (max-width: 640px) {
+  body { padding: 12px; }
+  .header { flex-direction: column; align-items: stretch; gap: 10px; }
+  .header h1 { font-size: 1.2rem; }
+  .auth-bar input[type=password] { min-width: auto; flex: 1; }
+  .stat-card { padding: 12px; }
+  .stat-card .value { font-size: 1.2rem; }
+  th, td { padding: 6px 8px; font-size: 0.8rem; }
+  .log-viewer { font-size: 0.75rem; }
+}
+/* Focus visible para acessibilidade (U14) */
+button:focus-visible, select:focus-visible, input:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
 </style>
 </head>
 <body>
 <div class="header">
-  <h1>ConvWatcher Dashboard</h1>
-  <button onclick="toggleTheme()" id="themeBtn">Light</button>
+  <h1>ConvWatcher Dashboard <span class="version" id="headerVersion"></span></h1>
+  <div style="display:flex; gap:8px;">
+    <button type="button" id="showAuthBtn" aria-label="Show auth token bar">Token</button>
+    <button onclick="toggleTheme()" id="themeBtn" aria-label="Toggle theme">Light</button>
+  </div>
 </div>
 
-<div class="stats" id="stats"></div>
+<div class="auth-bar" id="authBar">
+  <label for="authToken" style="font-size:0.85rem; color:var(--text-dim);">Auth token</label>
+  <input type="password" id="authToken" placeholder="Bearer token" aria-label="Auth token (sessionStorage)" autocomplete="off">
+  <button type="button" class="set" id="setToken" aria-label="Set auth token">Set</button>
+  <button type="button" class="clear" id="clearToken" aria-label="Clear auth token">Clear</button>
+</div>
+
+<div class="alert" id="errorAlert" role="alert" aria-live="polite">
+  <div class="msg" id="errorMsg"></div>
+  <button type="button" class="retry" id="retryBtn" aria-label="Retry">Retry</button>
+</div>
+
+<div class="section-error" id="sectionError"></div>
+
+<div class="stats" id="stats" aria-live="polite"></div>
 
 <div class="section">
   <h2>Watchers</h2>
@@ -105,16 +180,43 @@ th { color: var(--text-dim); font-weight: 500; }
 
 <div class="section">
   <h2>Conversion History</h2>
-  <table>
-    <thead><tr><th>Time</th><th>Watcher</th><th>File</th><th>Status</th><th>Output</th></tr></thead>
-    <tbody id="history"></tbody>
-  </table>
+  <div class="history-wrap">
+    <table>
+      <thead><tr><th>Time</th><th>Watcher</th><th>File</th><th>Status</th><th>Output</th></tr></thead>
+      <tbody id="history"></tbody>
+    </table>
+  </div>
 </div>
 
 <div class="section">
-  <h2>Recent Logs</h2>
+  <h2>Recent Logs
+    <div class="log-selector">
+      <label for="logType" style="font-size:0.85rem; color:var(--text-dim);">Log</label>
+      <select id="logType" aria-label="Selecionar log de app ou erros">
+        <option value="/logs">App log</option>
+        <option value="/logs/errors">Error log</option>
+      </select>
+      <button type="button" id="refreshLogs" aria-label="Atualizar logs agora">Refresh now</button>
+    </div>
+  </h2>
   <div class="log-viewer" id="logs">Loading...</div>
-  <div class="refresh-info">Auto-refresh every 5 seconds</div>
+  <div class="refresh-info" id="logRefreshInfo">Auto-refresh every 5 seconds</div>
+</div>
+
+<div class="section">
+  <h2>Refresh
+    <div class="refresh-controls">
+      <label for="refreshInterval" style="font-size:0.85rem; color:var(--text-dim);">Interval</label>
+      <select id="refreshInterval" aria-label="Intervalo de atualização automática">
+        <option value="5000">5s</option>
+        <option value="10000">10s</option>
+        <option value="30000">30s</option>
+        <option value="0">Off</option>
+      </select>
+      <button type="button" id="refreshNow" aria-label="Atualizar agora">Refresh now</button>
+    </div>
+  </h2>
+  <div class="refresh-info" id="refreshInfo">Auto-refresh every 5 seconds</div>
 </div>
 
 <script>
@@ -124,6 +226,72 @@ function escapeHtml(s) {
   if (typeof s !== 'string') s = String(s ?? '');
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
           .replace(/"/g, '&quot;').replace(/'/g, '&#x27;');
+}
+
+function getToken() {
+  try { return sessionStorage.getItem('cw_auth_token') || ''; } catch (e) { return ''; }
+}
+function setToken(v) {
+  try { sessionStorage.setItem('cw_auth_token', v); } catch (e) {}
+}
+function clearToken() {
+  try { sessionStorage.removeItem('cw_auth_token'); } catch (e) {}
+}
+
+function authHeaders() {
+  const t = getToken();
+  return t ? { 'Authorization': 'Bearer ' + t } : {};
+}
+
+function showAlert(msg) {
+  const el = document.getElementById('errorAlert');
+  const text = document.getElementById('errorMsg');
+  if (text) text.textContent = msg;
+  if (el) el.style.display = 'flex';
+}
+function hideAlert() {
+  const el = document.getElementById('errorAlert');
+  if (el) el.style.display = 'none';
+}
+function showSectionError(msg) {
+  const el = document.getElementById('sectionError');
+  if (el) { el.textContent = msg; el.style.display = 'block'; }
+}
+function hideSectionError() {
+  const el = document.getElementById('sectionError');
+  if (el) { el.style.display = 'none'; }
+}
+
+async function fetchJson(url) {
+  const res = await fetch(BASE + url, { headers: authHeaders() });
+  if (res.status === 401) {
+    throw new Error('UNAUTHORIZED');
+  }
+  if (!res.ok) {
+    throw new Error('HTTP ' + res.status);
+  }
+  return await res.json();
+}
+
+async function fetchText(url) {
+  const res = await fetch(BASE + url, { headers: authHeaders() });
+  if (res.status === 401) {
+    throw new Error('UNAUTHORIZED');
+  }
+  if (!res.ok) {
+    throw new Error('HTTP ' + res.status);
+  }
+  return await res.text();
+}
+
+function tokenBarVisible() {
+  return document.getElementById('authBar').style.display !== 'none';
+}
+function showTokenBar() {
+  document.getElementById('authBar').style.display = 'flex';
+}
+function hideTokenBar() {
+  document.getElementById('authBar').style.display = 'none';
 }
 
 function toggleTheme() {
@@ -138,41 +306,212 @@ if (localStorage.getItem('theme') === 'light') {
   document.getElementById('themeBtn').textContent = 'Dark';
 }
 
-async function fetchJson(url) {
+// --- Refresh control (U7) ---
+let refreshTimer = null;
+let refreshEnabled = true;
+let refreshMs = 5000;
+
+function readRefreshPref() {
   try {
-    const r = await fetch(BASE + url);
-    return await r.json();
-  } catch (e) { return {}; }
+    const v = localStorage.getItem('cw_refresh_ms');
+    if (v === '0') return { enabled: false, ms: 0 };
+    if (v) return { enabled: true, ms: parseInt(v, 10) || 5000 };
+  } catch (e) {}
+  return { enabled: true, ms: 5000 };
+}
+function writeRefreshPref(enabled, ms) {
+  try { localStorage.setItem('cw_refresh_ms', enabled ? String(ms) : '0'); } catch (e) {}
+}
+function scheduleRefresh() {
+  if (refreshTimer) { clearTimeout(refreshTimer); refreshTimer = null; }
+  if (!refreshEnabled || refreshMs <= 0) return;
+  refreshTimer = setTimeout(() => {
+    refreshTimer = null;
+    refresh().catch(() => {});
+    scheduleRefresh();
+  }, refreshMs);
+}
+function stopRefresh() {
+  if (refreshTimer) { clearTimeout(refreshTimer); refreshTimer = null; }
 }
 
-async function fetchText(url) {
+// --- Auth UI wiring ---
+document.getElementById('showAuthBtn').addEventListener('click', showTokenBar);
+document.getElementById('retryBtn').addEventListener('click', scheduleAndRun);
+document.getElementById('setToken').addEventListener('click', () => {
+  const input = document.getElementById('authToken');
+  const v = (input && input.value) ? input.value.trim() : '';
+  if (!v) { showAlert('Enter a token.'); return; }
+  setToken(v);
+  document.getElementById('authToken').value = '';
+  hideTokenBar();
+  hideAlert();
+  hideSectionError();
+  scheduleAndRun();
+});
+document.getElementById('clearToken').addEventListener('click', () => {
+  clearToken();
+  document.getElementById('authToken').value = '';
+  hideAlert();
+  hideSectionError();
+  scheduleAndRun();
+});
+document.getElementById('authToken').addEventListener('keypress', (e) => {
+  if (e.key === 'Enter') document.getElementById('setToken').click();
+});
+
+document.getElementById('refreshNow').addEventListener('click', () => {
+  stopRefresh();
+  refresh().catch(() => {});
+  scheduleRefresh();
+});
+document.getElementById('refreshLogs').addEventListener('click', () => {
+  refreshLogs().catch(() => {});
+});
+
+const intervalSel = document.getElementById('refreshInterval');
+const logSel = document.getElementById('logType');
+
+// Persist refresh preference
+(function initRefresh() {
+  const pref = readRefreshPref();
+  refreshEnabled = pref.enabled;
+  refreshMs = pref.ms;
+  if (intervalSel) {
+    intervalSel.value = String(refreshMs);
+    intervalSel.addEventListener('change', () => {
+      const v = parseInt(intervalSel.value, 10) || 5000;
+      refreshMs = v;
+      refreshEnabled = v > 0;
+      writeRefreshPref(refreshEnabled, refreshMs);
+      const info = document.getElementById('refreshInfo');
+      if (info) info.textContent = refreshEnabled ? ('Auto-refresh every ' + (refreshMs / 1000) + 's') : 'Auto-refresh Off';
+      stopRefresh();
+      if (refreshEnabled) scheduleRefresh();
+    });
+  }
+  updateRefreshInfo();
+})();
+
+// Persist log selection
+(function initLog() {
   try {
-    const r = await fetch(BASE + url);
-    return await r.text();
-  } catch (e) { return 'Error loading'; }
+    const saved = sessionStorage.getItem('cw_log_type');
+    if (logSel && saved) logSel.value = saved;
+  } catch (e) {}
+  if (logSel) {
+    logSel.addEventListener('change', () => {
+      try { sessionStorage.setItem('cw_log_type', logSel.value); } catch (e) {}
+      refreshLogs().catch(() => {});
+    });
+  }
+})();
+
+function updateRefreshInfo() {
+  const info = document.getElementById('refreshInfo');
+  const logInfo = document.getElementById('logRefreshInfo');
+  const txt = refreshEnabled ? ('Auto-refresh every ' + (refreshMs / 1000) + 's') : 'Auto-refresh Off';
+  if (info) info.textContent = txt;
+  if (logInfo) logInfo.textContent = txt;
 }
 
 async function refresh() {
-  const health = await fetchJson('/health');
-  const watchers = await fetchJson('/api/watchers');
-  const qp = await fetchJson('/api/queue');
-  const history = await fetchJson('/api/history');
-  const logs = await fetchText('/logs');
+  hideAlert();
+  hideSectionError();
 
-  document.getElementById('stats').innerHTML = `
-    <div class="stat-card"><div class="label">Status</div><div class="value ok">${escapeHtml(health.status || 'ok')}</div></div>
-    <div class="stat-card"><div class="label">Uptime</div><div class="value">${escapeHtml(health.uptime || '—')}</div></div>
-    <div class="stat-card"><div class="label">Watchers</div><div class="value">${escapeHtml(health.watchers || 0)}</div></div>
-    <div class="stat-card"><div class="label">Queue</div><div class="value">${escapeHtml(health.queue || 0)}</div></div>
-    <div class="stat-card"><div class="label">Processing</div><div class="value">${escapeHtml(health.processing || 0)}</div></div>
-    <div class="stat-card"><div class="label">Processed</div><div class="value ok">${escapeHtml(health.processed || 0)}</div></div>
-    <div class="stat-card"><div class="label">Errors</div><div class="value ${(health.errors || 0) > 0 ? 'err' : ''}">${escapeHtml(health.errors || 0)}</div></div>
+  let health, watchers, qp, history, logs;
+  try {
+    health = await fetchJson('/health');
+  } catch (e) {
+    handleFetchError(e, 'status');
+    return;
+  }
+
+  // Versão no header (U17)
+  const verEl = document.getElementById('headerVersion');
+  if (verEl && health.version) verEl.textContent = 'v' + String(health.version);
+  // Render the unauthenticated /health stats even if protected endpoints 401.
+  renderStats(health);
+
+  try {
+    watchers = await fetchJson('/api/watchers');
+  } catch (e) {
+    handleFetchError(e, 'watchers');
+    return;
+  }
+  try {
+    qp = await fetchJson('/api/queue');
+  } catch (e) {
+    handleFetchError(e, 'queue');
+    return;
+  }
+  try {
+    history = await fetchJson('/api/history');
+  } catch (e) {
+    handleFetchError(e, 'history');
+    return;
+  }
+
+  renderWatchers(watchers);
+  renderQueue(qp);
+  renderHistory(history);
+
+  try {
+    await refreshLogs();
+  } catch (e) {
+    handleFetchError(e, 'logs');
+  }
+
+  scheduleRefresh();
+}
+
+async function refreshLogs() {
+  const sel = document.getElementById('logType');
+  const url = (sel && sel.value) ? sel.value : '/logs';
+  const text = await fetchText(url);
+  document.getElementById('logs').textContent = text || 'No logs available';
+}
+
+function handleFetchError(e, section) {
+  const msg = String(e);
+  stopRefresh();
+  if (msg === 'UNAUTHORIZED') {
+    showAlert('Unauthorized — set token');
+    showTokenBar();
+    showSectionError('Unauthorized — set a Bearer token in sessionStorage.');
+    return;
+  }
+  showAlert('Failed to load ' + section + ': ' + msg);
+  showSectionError('Error loading ' + section + ': ' + msg);
+}
+
+function renderStats(health) {
+  const errors = health.errors || 0;
+  const statsEl = document.getElementById('stats');
+  statsEl.innerHTML = `
+    <div class="stat-card"><div class="label">Status</div><div class="value ok" aria-live="polite">${escapeHtml(health.status || 'ok')}</div></div>
+    <div class="stat-card"><div class="label">Version</div><div class="value" aria-live="polite">${escapeHtml(health.version || '—')}</div></div>
+    <div class="stat-card"><div class="label">Uptime</div><div class="value" aria-live="polite">${escapeHtml(health.uptime || '—')}</div></div>
+    <div class="stat-card"><div class="label">Watchers</div><div class="value" aria-live="polite">${escapeHtml(health.watchers || 0)}</div></div>
+    <div class="stat-card"><div class="label">Queue</div><div class="value" aria-live="polite">${escapeHtml(health.queue || 0)}</div></div>
+    <div class="stat-card"><div class="label">Processing</div><div class="value" aria-live="polite">${escapeHtml(health.processing || 0)}</div></div>
+    <div class="stat-card"><div class="label">Processed</div><div class="value ok" aria-live="polite">${escapeHtml(health.processed || 0)}</div></div>
+    <div class="stat-card"><div class="label">Errors</div><div class="value ${errors > 0 ? 'err' : ''}" aria-live="polite">${escapeHtml(errors)}</div></div>
   `;
+}
 
-  const watcherHtml = (Array.isArray(watchers) ? watchers : []).map(w => `
+function renderWatchers(watchers) {
+  const arr = Array.isArray(watchers) ? watchers : [];
+  const container = document.getElementById('watchers');
+  if (arr.length === 0) {
+    container.innerHTML = '<div class="card"><div class="detail">No watchers configured</div></div>';
+    return;
+  }
+  container.innerHTML = arr.map(w => `
     <div class="card">
-      <div class="title">${escapeHtml(w.watch_folder)}</div>
-      <div class="detail">Output: ${escapeHtml(w.output_folder)}</div>
+      <div class="title name">${escapeHtml(w.name || w.watch_folder || 'Watcher')}</div>
+      <div class="detail">Watch: ${escapeHtml(w.watch_folder || '—')}</div>
+      <div class="detail">Output: ${escapeHtml(w.output_folder || '—')}</div>
       <div class="rules">
         ${(w.video_rules || []).length > 0 ? '<span>Video: ' + escapeHtml(w.video_rules.join(', ')) + '</span>' : ''}
         ${(w.audio_rules || []).length > 0 ? '<span>Audio: ' + escapeHtml(w.audio_rules.join(', ')) + '</span>' : ''}
@@ -183,38 +522,48 @@ async function refresh() {
       </div>
     </div>
   `).join('');
-  document.getElementById('watchers').innerHTML = watcherHtml || '<div class="card"><div class="detail">No watchers configured</div></div>';
+}
 
+function renderQueue(qp) {
   const processing = qp.processing || {};
   const queue = qp.queue || {};
   let queueHtml = '';
   if (Object.keys(processing).length > 0) {
-    queueHtml += '<p>Processing: ' + Object.entries(processing).map(([k,v]) => {
+    queueHtml += '<p>Processing: ' + Object.entries(processing).map(([k, v]) => {
       const files = Array.isArray(v) ? v.join(', ') : v;
       return escapeHtml(k) + ': ' + escapeHtml(files);
     }).join(', ') + '</p>';
   }
   if (Object.keys(queue).length > 0) {
-    queueHtml += '<p>Queue items: ' + Object.values(queue).reduce((a,b) => a + b.length, 0) + '</p>';
+    queueHtml += '<p>Queue items: ' + Object.values(queue).reduce((a, b) => a + b.length, 0) + '</p>';
   }
   document.getElementById('queueInfo').innerHTML = queueHtml || '<div class="detail">Idle — no jobs in queue</div>';
-
-  const historyArr = Array.isArray(history) ? history : [];
-  document.getElementById('history').innerHTML = historyArr.slice(-50).reverse().map(h => `
-    <tr>
-      <td>${escapeHtml(h.time)}</td>
-      <td>${escapeHtml(h.watcher)}</td>
-      <td>${escapeHtml(h.file)}</td>
-      <td class="status-${escapeHtml(h.status)}">${escapeHtml(h.status)}</td>
-      <td>${escapeHtml(h.output || '—')}</td>
-    </tr>
-  `).join('');
-
-  document.getElementById('logs').textContent = logs || 'No logs available';
 }
 
-refresh();
-setInterval(refresh, 5000);
+function renderHistory(history) {
+  const arr = Array.isArray(history) ? history : [];
+  document.getElementById('history').innerHTML = arr.slice(-50).reverse().map(h => {
+    const statusClass = (h.status === 'error' || h.status === 'Error') ? 'status-error' : 'status-done';
+    return `
+      <tr>
+        <td>${escapeHtml(h.time)}</td>
+        <td>${escapeHtml(h.watcher)}</td>
+        <td>${escapeHtml(h.file)}</td>
+        <td class="${statusClass}" data-label="Status">${escapeHtml(h.status || '—')}</td>
+        <td>${escapeHtml(h.output || '—')}</td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function scheduleAndRun() {
+  stopRefresh();
+  refresh().catch(() => {});
+  scheduleRefresh();
+}
+
+refresh().catch(() => {});
+scheduleRefresh();
 </script>
 </body>
 </html>
